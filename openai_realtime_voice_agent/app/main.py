@@ -58,7 +58,32 @@ class Application:
         vad_threshold = float(os.environ.get("VAD_THRESHOLD", "0.5"))
         vad_prefix_padding_ms = int(os.environ.get("VAD_PREFIX_PADDING_MS", "300"))
         vad_silence_duration_ms = int(os.environ.get("VAD_SILENCE_DURATION_MS", "500"))
-        
+
+        # Turn detection mode. "semantic_vad" is OpenAI's recommended mode for
+        # natural conversation: it detects a *semantic* end-of-utterance instead
+        # of a fixed silence window, so it doesn't cut the user off on a pause
+        # and is more resistant to speaker->mic echo. "server_vad" is the classic
+        # silence-based detector tuned by the vad_* values above.
+        turn_detection_type = os.environ.get("TURN_DETECTION_TYPE", "semantic_vad").strip().lower()
+        if turn_detection_type not in ("semantic_vad", "server_vad"):
+            logger.warning(f"⚠️ Unknown TURN_DETECTION_TYPE '{turn_detection_type}', falling back to semantic_vad")
+            turn_detection_type = "semantic_vad"
+        # semantic_vad eagerness: "low" waits longest before deciding the user is
+        # done (fewest mid-sentence cut-offs). low | medium | high | auto.
+        vad_eagerness = os.environ.get("VAD_EAGERNESS", "low").strip().lower()
+        if vad_eagerness not in ("low", "medium", "high", "auto"):
+            logger.warning(f"⚠️ Unknown VAD_EAGERNESS '{vad_eagerness}', falling back to low")
+            vad_eagerness = "low"
+        # Whether detected user speech may interrupt the assistant's reply
+        # (handsfree barge-in). With imperfect device-side AEC, set this false so
+        # speaker echo can't cut replies short; interrupt then only via the
+        # device "stop" wake word / center button.
+        interrupt_response = os.environ.get("INTERRUPT_RESPONSE", "true").strip().lower() == "true"
+        # Pin the input-transcription language (ISO code, e.g. "nl"). Empty = let
+        # the model auto-detect. Helps stop the model drifting to another
+        # language; pair it with an explicit language lock in `instructions`.
+        transcription_language = os.environ.get("TRANSCRIPTION_LANGUAGE", "").strip()
+
         # Get instructions with default
         instructions = os.environ.get("INSTRUCTIONS", "You are the Home Assistant Voice Agent and can control the Smart Home.")
 
@@ -111,6 +136,10 @@ class Application:
         self.vad_threshold = vad_threshold
         self.vad_prefix_padding_ms = vad_prefix_padding_ms
         self.vad_silence_duration_ms = vad_silence_duration_ms
+        self.turn_detection_type = turn_detection_type
+        self.vad_eagerness = vad_eagerness
+        self.interrupt_response = interrupt_response
+        self.transcription_language = transcription_language
         self.instructions = instructions
         self.model = openai_model
         self.voice = openai_voice
@@ -184,7 +213,9 @@ class Application:
                 AudioConfiguration,
                 AudioInput,
                 AudioOutput,
-                TurnDetection
+                TurnDetection,
+                SemanticTurnDetection,
+                InputAudioTranscription,
             )
             
             # Create disconnect tool definition
@@ -227,22 +258,55 @@ class Application:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to fetch MCP tool definitions: {e}")
             
+            # Turn detection: semantic_vad (recommended — semantic end-of-turn,
+            # echo-resistant, doesn't cut the user off) or classic server_vad.
+            if self.turn_detection_type == "semantic_vad":
+                turn_detection = SemanticTurnDetection(
+                    eagerness=self.vad_eagerness,
+                    create_response=True,
+                    interrupt_response=self.interrupt_response,
+                )
+            else:
+                turn_detection = TurnDetection(
+                    type="server_vad",
+                    threshold=self.vad_threshold,
+                    prefix_padding_ms=self.vad_prefix_padding_ms,
+                    silence_duration_ms=self.vad_silence_duration_ms,
+                )
+
+            # Optionally pin the input-transcription language to stop the model
+            # drifting between languages (e.g. "nl"). Empty -> auto-detect.
+            transcription = (
+                InputAudioTranscription(language=self.transcription_language)
+                if self.transcription_language
+                else None
+            )
+
             session_properties = SessionProperties(
                 instructions=self.instructions,
                 audio=AudioConfiguration(
                     input=AudioInput(
-                        turn_detection=TurnDetection(
-                            type="server_vad",
-                            threshold=self.vad_threshold,
-                            prefix_padding_ms=self.vad_prefix_padding_ms,
-                            silence_duration_ms=self.vad_silence_duration_ms
-                        )
+                        turn_detection=turn_detection,
+                        transcription=transcription,
                     ),
                     output=AudioOutput(voice=self.voice)
                 ),
                 tools=all_tools
             )
-            
+
+            if self.turn_detection_type == "semantic_vad":
+                logger.info(
+                    f"🎚️ Turn detection: semantic_vad (eagerness={self.vad_eagerness}, "
+                    f"interrupt_response={self.interrupt_response})"
+                    + (f", transcription language={self.transcription_language}" if self.transcription_language else "")
+                )
+            else:
+                logger.info(
+                    f"🎚️ Turn detection: server_vad (threshold={self.vad_threshold}, "
+                    f"silence_duration_ms={self.vad_silence_duration_ms})"
+                    + (f", transcription language={self.transcription_language}" if self.transcription_language else "")
+                )
+
             logger.info(f"🔧 Creating session with {len(all_tools)} tools: {[tool.get('name', 'unknown') for tool in all_tools]}")
             
             # Create new service instance

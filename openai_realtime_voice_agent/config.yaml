@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice Agent
-version: "0.2.2"
+version: "0.3.0"
 slug: openai_realtime_voice_agent
 description: Voice control using OpenAI Realtime API with WebSocket support for ESP32 devices
 url: https://github.com/fjfricke/ha-openai-realtime
@@ -42,7 +42,29 @@ options:
   vad_threshold: 0.5
   vad_prefix_padding_ms: 300
   vad_silence_duration_ms: 500
-  # OpenAI instructions
+  # Turn detection mode. "semantic_vad" (recommended by OpenAI) detects a
+  # natural end-of-utterance instead of a fixed silence window: it doesn't cut
+  # you off when you pause and resists speaker->mic echo. "server_vad" is the
+  # classic silence-based detector tuned by the three vad_* values above.
+  turn_detection_type: "semantic_vad"
+  # semantic_vad only: how eager to end the user's turn. "low" waits longest
+  # (fewest mid-sentence cut-offs). low | medium | high | auto.
+  vad_eagerness: "low"
+  # Allow user speech to interrupt the assistant mid-reply (handsfree barge-in).
+  # If the device's echo cancellation is imperfect and replies get cut short,
+  # set this false and interrupt with the "stop" wake word / center button.
+  interrupt_response: true
+  # Pin the language (ISO code, e.g. "nl" for Dutch). Empty = auto-detect.
+  # Stops the model drifting to another language; pair with a language lock in
+  # `instructions`.
+  transcription_language: ""
+  # Milliseconds the bot must stay silent after a reply before the device
+  # returns to idle. Bridges the gaps between TTS sentences / tool-calls so the
+  # LED ring and the "stop" wake word stay active for the whole answer.
+  phase_idle_debounce_ms: 1500
+  # OpenAI instructions. For non-English, lock the language explicitly, e.g.:
+  #   "Je bent de Home Assistant spraakassistent en bestuurt het smart home.
+  #    Spreek en versta UITSLUITEND Nederlands. Wissel nooit van taal."
   instructions: "You are the Home Assistant Voice Agent and can control the Smart Home."
   # Session management
   session_reuse_timeout_seconds: 300  # 5 Minuten (in Sekunden)
@@ -60,6 +82,11 @@ schema:
   vad_threshold: float(0.0,1.0)
   vad_prefix_padding_ms: int
   vad_silence_duration_ms: int
+  turn_detection_type: "list(semantic_vad|server_vad)"
+  vad_eagerness: "list(low|medium|high|auto)"
+  interrupt_response: bool
+  transcription_language: str?
+  phase_idle_debounce_ms: int(0,10000)
   instructions: str
   session_reuse_timeout_seconds: int(0,3600)  # bis 1 Stunde
   enable_recording: bool

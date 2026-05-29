@@ -15,6 +15,11 @@ MCP_TOOL_ALLOWLIST=$(bashio::config 'mcp_tool_allowlist')
 VAD_THRESHOLD=$(bashio::config 'vad_threshold')
 VAD_PREFIX_PADDING_MS=$(bashio::config 'vad_prefix_padding_ms')
 VAD_SILENCE_DURATION_MS=$(bashio::config 'vad_silence_duration_ms')
+TURN_DETECTION_TYPE=$(bashio::config 'turn_detection_type')
+VAD_EAGERNESS=$(bashio::config 'vad_eagerness')
+INTERRUPT_RESPONSE=$(bashio::config 'interrupt_response')
+TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
+PHASE_IDLE_DEBOUNCE_MS=$(bashio::config 'phase_idle_debounce_ms')
 
 # Get instructions
 INSTRUCTIONS=$(bashio::config 'instructions')
@@ -44,6 +49,11 @@ export MCP_TOOL_ALLOWLIST
 export VAD_THRESHOLD
 export VAD_PREFIX_PADDING_MS
 export VAD_SILENCE_DURATION_MS
+export TURN_DETECTION_TYPE
+export VAD_EAGERNESS
+export INTERRUPT_RESPONSE
+export TRANSCRIPTION_LANGUAGE
+export PHASE_IDLE_DEBOUNCE_MS
 
 # Export instructions
 export INSTRUCTIONS
