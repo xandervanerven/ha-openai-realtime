@@ -263,7 +263,13 @@ class Application:
             if self.turn_detection_type == "semantic_vad":
                 turn_detection = SemanticTurnDetection(
                     eagerness=self.vad_eagerness,
-                    create_response=True,
+                    # MUST be False: Pipecat's context aggregator drives response
+                    # creation itself (it sends response.create on user-turn-end).
+                    # If the server ALSO auto-creates a response on VAD, OpenAI
+                    # rejects the second one with
+                    # `conversation_already_has_active_response`. The classic
+                    # server_vad path worked precisely because it never set this.
+                    create_response=False,
                     interrupt_response=self.interrupt_response,
                 )
             else:
