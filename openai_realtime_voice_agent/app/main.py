@@ -79,6 +79,14 @@ class Application:
         # speaker echo can't cut replies short; interrupt then only via the
         # device "stop" wake word / center button.
         interrupt_response = os.environ.get("INTERRUPT_RESPONSE", "false").strip().lower() == "true"
+        # Who creates the OpenAI response each user turn (semantic_vad only).
+        # TRUE (default) = the server creates a response on every detected
+        # end-of-turn. This is REQUIRED for multi-turn: Pipecat 0.0.97's realtime
+        # service only auto-creates a response for the FIRST context (turn 1) and
+        # after tool results; plain 2nd/3rd user turns get NO response unless the
+        # server makes it. FALSE reproduces the old single-turn-only behaviour
+        # (turn 1 answers, turn 2 hangs in "thinking"). See _ensure_openai_service.
+        semantic_vad_create_response = os.environ.get("SEMANTIC_VAD_CREATE_RESPONSE", "true").strip().lower() == "true"
         # Pin the input-transcription language (ISO code, e.g. "nl"). Empty = let
         # the model auto-detect. Helps stop the model drifting to another
         # language; pair it with an explicit language lock in `instructions`.
@@ -139,6 +147,7 @@ class Application:
         self.turn_detection_type = turn_detection_type
         self.vad_eagerness = vad_eagerness
         self.interrupt_response = interrupt_response
+        self.semantic_vad_create_response = semantic_vad_create_response
         self.transcription_language = transcription_language
         self.instructions = instructions
         self.model = openai_model
@@ -263,13 +272,23 @@ class Application:
             if self.turn_detection_type == "semantic_vad":
                 turn_detection = SemanticTurnDetection(
                     eagerness=self.vad_eagerness,
-                    # MUST be False: Pipecat's context aggregator drives response
-                    # creation itself (it sends response.create on user-turn-end).
-                    # If the server ALSO auto-creates a response on VAD, OpenAI
-                    # rejects the second one with
-                    # `conversation_already_has_active_response`. The classic
-                    # server_vad path worked precisely because it never set this.
-                    create_response=False,
+                    # create_response=True (default): the SERVER creates a
+                    # response on every detected end-of-turn. This is required for
+                    # multi-turn conversation. Pipecat 0.0.97's
+                    # OpenAIRealtimeLLMService._handle_context only auto-creates a
+                    # response for the FIRST context (turn 1) and after tool
+                    # results (its else-branch just updates the context); a plain
+                    # 2nd/3rd user turn therefore gets NO response unless the
+                    # server makes it. We previously set this False to stop a
+                    # turn-1 double-response (server + Pipecat first-context both
+                    # creating → `conversation_already_has_active_response`), but
+                    # that silently broke every turn after the first (device hung
+                    # in "thinking"). True is the correct trade: the server drives
+                    # all user-turn responses; Pipecat still creates the post-tool
+                    # response via _process_completed_function_calls. If a turn-1
+                    # double resurfaces, the proper fix is to seed self._context
+                    # at session start so turn 1 also goes through the server.
+                    create_response=self.semantic_vad_create_response,
                     interrupt_response=self.interrupt_response,
                 )
             else:
@@ -303,6 +322,7 @@ class Application:
             if self.turn_detection_type == "semantic_vad":
                 logger.info(
                     f"🎚️ Turn detection: semantic_vad (eagerness={self.vad_eagerness}, "
+                    f"create_response={self.semantic_vad_create_response}, "
                     f"interrupt_response={self.interrupt_response})"
                     + (f", transcription language={self.transcription_language}" if self.transcription_language else "")
                 )

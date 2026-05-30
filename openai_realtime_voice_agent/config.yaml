@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice Agent
-version: "0.3.5"
+version: "0.3.6"
 slug: openai_realtime_voice_agent
 description: Voice control using OpenAI Realtime API with WebSocket support for ESP32 devices
 url: https://github.com/fjfricke/ha-openai-realtime
@@ -56,6 +56,13 @@ options:
   # semantic_vad only: how eager to end the user's turn. "low" waits longest
   # (fewest mid-sentence cut-offs). low | medium | high | auto.
   vad_eagerness: "low"
+  # semantic_vad only: who creates the OpenAI response each turn. TRUE (default)
+  # = the SERVER creates a response on every detected end-of-turn. REQUIRED for
+  # multi-turn: Pipecat 0.0.97 only auto-creates the FIRST turn's response (and
+  # post-tool), so with this false the 2nd/3rd question hangs forever in
+  # "thinking" (turn 1 answers, then nothing). Leave true unless you specifically
+  # want single-turn-only behaviour.
+  semantic_vad_create_response: true
   # Allow user speech to interrupt the assistant mid-reply (handsfree barge-in).
   # Default false: with imperfect device-side echo cancellation, the bot's own
   # audio can be heard as "speech" and cut the reply short. Interrupt with the
@@ -91,6 +98,7 @@ schema:
   vad_silence_duration_ms: int
   turn_detection_type: "list(semantic_vad|server_vad)"
   vad_eagerness: "list(low|medium|high|auto)"
+  semantic_vad_create_response: bool
   interrupt_response: bool
   transcription_language: str?
   phase_idle_debounce_ms: int(0,10000)
