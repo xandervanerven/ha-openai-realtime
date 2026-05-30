@@ -80,22 +80,31 @@ class InputResampler(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, InputAudioRawFrame) and frame.sample_rate != self._out_rate:
+            if not frame.audio:
+                return  # nothing to resample / forward; don't emit empty audio
             try:
                 resampled = await self._resampler.resample(
                     frame.audio, frame.sample_rate, self._out_rate
                 )
-                if not self._logged:
-                    logger.info(
-                        f"🎙️ Resampling device input {frame.sample_rate}Hz -> {self._out_rate}Hz for OpenAI"
-                    )
-                    self._logged = True
-                frame = InputAudioRawFrame(
-                    audio=resampled,
-                    sample_rate=self._out_rate,
-                    num_channels=frame.num_channels,
-                )
             except Exception as e:
                 logger.warning(f"⚠️ input resample {frame.sample_rate}->{self._out_rate} failed: {e!r}")
+                return  # drop rather than forward wrong-rate audio
+            # The streaming resampler buffers internally and can return empty
+            # bytes while priming or on a tiny chunk. OpenAI rejects an
+            # input_audio_buffer.append with empty audio ("got empty bytes"), so
+            # drop those frames — the samples stay buffered and come out next call.
+            if not resampled:
+                return
+            if not self._logged:
+                logger.info(
+                    f"🎙️ Resampling device input {frame.sample_rate}Hz -> {self._out_rate}Hz for OpenAI"
+                )
+                self._logged = True
+            frame = InputAudioRawFrame(
+                audio=resampled,
+                sample_rate=self._out_rate,
+                num_channels=frame.num_channels,
+            )
         await self.push_frame(frame, direction)
 
 
