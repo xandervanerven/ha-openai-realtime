@@ -12,7 +12,7 @@ from pipecat.transports.websocket.server import WebsocketServerTransport, Websoc
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, InterruptionTaskFrame
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.services.openai.realtime import events as openai_rt_events
 
@@ -202,22 +202,6 @@ class WebSocketHandler:
             raise RuntimeError("OpenAI service must be created before building pipeline")
         
         logger.info(f"🔗 Building pipeline with WebSocket transport and OpenAI service: {type(openai_service).__name__}")
-
-        # Wire the device "stop" interrupt to an explicit OpenAI response.cancel.
-        # The serializer calls this when it sees {"type":"interrupt"} from the
-        # device. We cancel directly on THIS pipeline's service rather than
-        # emitting a pipecat InterruptionFrame, because pipecat's VAD already
-        # emits InterruptionFrames on every user-start-speaking — reacting to
-        # those would cancel the reply on any speech.
-        async def _on_device_interrupt():
-            try:
-                await openai_service.send_client_event(openai_rt_events.ResponseCancelEvent())
-                logger.info("🛑 device interrupt → response.cancel sent to OpenAI")
-            except Exception as e:
-                logger.warning(f"⚠️ could not cancel OpenAI response on device interrupt: {e!r}")
-
-        if self._serializer is not None:
-            self._serializer.set_interrupt_handler(_on_device_interrupt)
         
         # Create activity trackers
         input_activity_tracker = SessionActivityTracker(
@@ -294,7 +278,33 @@ class WebSocketHandler:
         asyncio.create_task(runner.run(task))
         logger.info("✅ Pipeline started for WebSocket connection")
         logger.info("✅ Pipeline initialized successfully")
-        
+
+        # Wire the device "stop" interrupt. The serializer calls this when it
+        # sees {"type":"interrupt"} from the device. By the time the user says
+        # "stop", OpenAI has usually FINISHED generating (it bursts the whole
+        # reply faster than real-time) — so response.cancel alone fails with
+        # "no active response" and the buffered TTS keeps playing out. The real
+        # fix is to interrupt the BOT so pipecat clears the output transport's
+        # queued audio: queue an InterruptionTaskFrame (the non-deprecated
+        # programmatic bot-interrupt). We additionally send response.cancel ONLY
+        # if a response is still actively generating, to avoid the noisy
+        # "response_cancel_not_active" error in the common (already-done) case.
+        async def _on_device_interrupt():
+            try:
+                await task.queue_frames([InterruptionTaskFrame()])
+                logger.info("🛑 device interrupt → bot interruption queued (clears buffered reply)")
+            except Exception as e:
+                logger.warning(f"⚠️ could not interrupt pipeline on device interrupt: {e!r}")
+            try:
+                if getattr(openai_service, "_current_assistant_response", None) is not None:
+                    await openai_service.send_client_event(openai_rt_events.ResponseCancelEvent())
+                    logger.info("🛑 device interrupt → response.cancel sent (response was still active)")
+            except Exception as e:
+                logger.warning(f"⚠️ could not cancel active OpenAI response: {e!r}")
+
+        if self._serializer is not None:
+            self._serializer.set_interrupt_handler(_on_device_interrupt)
+
         return pipeline, runner, task
     
     def extract_client_id(self, websocket) -> str:
