@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice Agent
-version: "0.4.13"
+version: "0.4.14"
 slug: openai_realtime_voice_agent
 description: Voice control using OpenAI Realtime API with WebSocket support for ESP32 devices
 url: https://github.com/fjfricke/ha-openai-realtime
@@ -106,6 +106,14 @@ options:
   # (a spurious turn) or echoes. 200 is a good start; try 0 only if your audio
   # tail is truly gone by the time the reply ends. Sent in the handshake too.
   follow_up_open_delay_ms: 200
+  # Playback jitter buffer (ms). The device holds incoming TTS audio until this
+  # much has accumulated before it starts playing, giving the audio pipeline a
+  # cushion so brief network hiccups don't make the speaker run dry mid-word
+  # (the short "crackle"/glitch you sometimes hear). Higher = more robust against
+  # stutter but adds this much latency before a reply starts; 0 = off (play
+  # immediately). 150 is a good start; raise to 250-300 if you still hear
+  # crackle. Sent in the handshake, so tune it and just restart the add-on.
+  playback_prebuffer_ms: 150
   # OpenAI instructions. For non-English, lock the language explicitly, e.g.:
   #   "Je bent de Home Assistant spraakassistent en bestuurt het smart home.
   #    Spreek en versta UITSLUITEND Nederlands. Wissel nooit van taal."
@@ -136,6 +144,7 @@ schema:
   phase_idle_debounce_ms: int(0,10000)
   follow_up_listen_seconds: int(0,60)
   follow_up_open_delay_ms: int(0,5000)
+  playback_prebuffer_ms: int(0,2000)
   instructions: str
   session_reuse_timeout_seconds: int(0,3600)  # bis 1 Stunde
   enable_recording: bool

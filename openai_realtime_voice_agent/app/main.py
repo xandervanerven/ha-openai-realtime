@@ -167,6 +167,14 @@ class Application:
         except (TypeError, ValueError):
             follow_up_open_delay_ms = 200
         follow_up_open_delay_ms = max(0, min(5000, follow_up_open_delay_ms))
+        # Playback jitter buffer (ms): the device holds incoming TTS until this
+        # much has accumulated before playing, so a brief network hiccup doesn't
+        # dry out the speaker chain mid-word (audible crackle). Sent in `hello`.
+        try:
+            playback_prebuffer_ms = int(os.environ.get("PLAYBACK_PREBUFFER_MS", "150"))
+        except (TypeError, ValueError):
+            playback_prebuffer_ms = 150
+        playback_prebuffer_ms = max(0, min(2000, playback_prebuffer_ms))
 
         # Get session reuse timeout and initialize session manager
         session_reuse_timeout = float(os.environ.get("SESSION_REUSE_TIMEOUT_SECONDS", "300"))
@@ -199,11 +207,13 @@ class Application:
             audio_recording_service=self.audio_recording_service,
             follow_up_ms=follow_up_ms,
             follow_up_open_delay_ms=follow_up_open_delay_ms,
+            playback_prebuffer_ms=playback_prebuffer_ms,
         )
         logger.info(
             f"🔁 Follow-up window: {follow_up_listen_seconds}s "
             f"({'enabled' if follow_up_ms > 0 else 'disabled — turn-based'}), "
-            f"mic-open delay {follow_up_open_delay_ms}ms"
+            f"mic-open delay {follow_up_open_delay_ms}ms, "
+            f"playback prebuffer {playback_prebuffer_ms}ms"
         )
         self.websocket_transport = self.websocket_handler.create_transport()
         

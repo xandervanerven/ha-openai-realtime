@@ -121,6 +121,14 @@ configuration:
       follow-up mic, bridging the speaker's hardware tail so it doesn't "hear
       itself". Lower = the listening ring appears sooner; raise it if the device
       starts hearing itself / echoes after a reply. 200 is a good start.
+  playback_prebuffer_ms:
+    name: Playback jitter buffer (ms)
+    description: >-
+      How much TTS audio the device buffers before it starts playing a reply.
+      Cushions brief network hiccups so the speaker doesn't run dry mid-word (the
+      short crackle/glitch you sometimes hear). Higher = more robust but adds
+      this much latency before a reply starts. 150 is a good start; raise to
+      250-300 if you still hear crackle, 0 to disable.
   instructions:
     name: System instructions
     description: >-

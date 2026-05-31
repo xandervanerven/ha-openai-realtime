@@ -205,6 +205,7 @@ class WebSocketHandler:
         audio_recording_service: Optional[AudioRecordingService] = None,
         follow_up_ms: int = 0,
         follow_up_open_delay_ms: int = 1500,
+        playback_prebuffer_ms: int = 0,
     ):
         """
         Initialize WebSocket handler.
@@ -227,6 +228,7 @@ class WebSocketHandler:
         self.audio_recording_service = audio_recording_service
         self.follow_up_ms = max(0, int(follow_up_ms))
         self.follow_up_open_delay_ms = max(0, int(follow_up_open_delay_ms))
+        self.playback_prebuffer_ms = max(0, int(playback_prebuffer_ms))
 
         self.transport: Optional[WebsocketServerTransport] = None
         self.pipeline: Optional[Pipeline] = None
@@ -516,6 +518,7 @@ class WebSocketHandler:
                     "audio_out": "pcm",
                     "follow_up_ms": self.follow_up_ms,
                     "follow_up_open_delay_ms": self.follow_up_open_delay_ms,
+                    "playback_prebuffer_ms": self.playback_prebuffer_ms,
                 },
             )
             await on_client_connected_callback(client_id)
