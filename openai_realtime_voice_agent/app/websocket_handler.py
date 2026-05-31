@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from typing import Optional, Callable, Awaitable, Dict
 
@@ -12,7 +13,7 @@ from pipecat.transports.websocket.server import WebsocketServerTransport, Websoc
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, InterruptionTaskFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, InterruptionTaskFrame, ErrorFrame
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.services.openai.realtime import events as openai_rt_events
 
@@ -108,6 +109,83 @@ class InputResampler(FrameProcessor):
                 num_channels=frame.num_channels,
             )
         await self.push_frame(frame, direction)
+
+
+class ConnectionRecovery(FrameProcessor):
+    """Auto-reconnect the OpenAI Realtime session when its WebSocket dies.
+
+    pipecat 0.0.97's OpenAIRealtimeLLMService has NO reconnect logic: when the
+    OpenAI WS drops (1011 keepalive ping timeout, 1001 going away on the 60-min
+    cap, 1006, or any send/receive failure) it treats the send error as fatal and
+    floods ErrorFrame — ~15/s, one per forwarded mic frame — forever. The single
+    persistent session is then dead until the add-on restarts, so the device gets
+    no answer to any further turn (observed live: a 1011 flood after which the
+    next question got silence).
+
+    This processor watches the ErrorFrames as they travel upstream to the task
+    source, and on the first connection-death signature it:
+      1. emits `idle` to the device so it unsticks (LED + mic reset), and
+      2. calls service.reset_conversation() — the one PUBLIC method that does
+         _disconnect() + _connect() + re-sends the session config (instructions,
+         tools, turn detection) — to bring the session back IN PLACE. No pipeline
+         rebuild: the running pipeline keeps the same service object, which is
+         exactly the one reset_conversation reconnects.
+    A guard + cooldown collapse the error flood into a single reconnect attempt,
+    retrying at most every RECONNECT_COOLDOWN_S while the link stays down.
+    """
+
+    # Substrings that mark a dead/closed OpenAI websocket (vs an app-level error
+    # like a tool failure, which we must NOT reconnect on).
+    _DEATH_MARKERS = (
+        "keepalive ping timeout",
+        "going away",
+        "no close frame",
+        "ConnectionClosed",
+        "connection is closed",
+        "sent 1011",
+        "sent 1001",
+        "1006",
+    )
+    RECONNECT_COOLDOWN_S = 5.0
+
+    def __init__(self, openai_service, emit_idle=None, **kwargs):
+        super().__init__(**kwargs)
+        self._service = openai_service
+        self._emit_idle = emit_idle  # async callable(value:str), e.g. broadcast_phase
+        self._reconnecting = False
+        self._last_attempt = 0.0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, ErrorFrame) and not self._reconnecting:
+            msg = str(getattr(frame, "error", "") or "")
+            if any(m in msg for m in self._DEATH_MARKERS):
+                now = time.monotonic()
+                if now - self._last_attempt >= self.RECONNECT_COOLDOWN_S:
+                    self._reconnecting = True
+                    self._last_attempt = now
+                    asyncio.create_task(self._recover(msg))
+        await self.push_frame(frame, direction)
+
+    async def _recover(self, reason: str):
+        try:
+            logger.warning(f"🔌 OpenAI Realtime connection lost ({reason[:90]}) — reconnecting…")
+            # Unstick the device first, regardless of how the reconnect goes.
+            if self._emit_idle is not None:
+                try:
+                    await self._emit_idle("idle")
+                except Exception as e:
+                    logger.warning(f"⚠️ could not emit idle during recovery: {e!r}")
+            reset = getattr(self._service, "reset_conversation", None)
+            if reset is None:
+                logger.error("❌ service has no reset_conversation(); cannot reconnect in place")
+                return
+            await reset()
+            logger.info("✅ OpenAI Realtime session reconnected")
+        except Exception as e:
+            logger.error(f"❌ OpenAI reconnect attempt failed: {e!r}")
+        finally:
+            self._reconnecting = False
 
 
 class WebSocketHandler:
@@ -235,6 +313,10 @@ class WebSocketHandler:
         # raw 16 kHz (which OpenAI would otherwise read 1.5x too fast).
         pipeline_components = [
             transport.input(),
+            # Watch for OpenAI connection-death ErrorFrames (they travel upstream
+            # to the task source, so place this upstream of the service) and
+            # reconnect in place. Without it a 1011/1001 drop bricks the session.
+            ConnectionRecovery(openai_service=openai_service, emit_idle=self.broadcast_phase),
             InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
             input_activity_tracker,
         ]
