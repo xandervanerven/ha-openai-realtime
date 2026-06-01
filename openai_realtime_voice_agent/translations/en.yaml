@@ -26,6 +26,25 @@ configuration:
     description: >-
       Only used when Assistant voice is set to "custom". Enter any valid voice
       name.
+  openai_speed:
+    name: Voice speed
+    description: >-
+      Playback speed of the assistant's voice. 1.0 = normal, lower is slower
+      (down to 0.25), higher is faster (up to 1.5). Post-processing only — it
+      doesn't change what's said, just the pace.
+  max_output_tokens:
+    name: Max reply length (tokens)
+    description: >-
+      Cap the assistant's reply length in output tokens. 0 = unlimited. Set e.g.
+      1024 to stop the occasional runaway monologue and bound per-reply token
+      cost. Too low can cut answers off mid-sentence.
+  noise_reduction:
+    name: Input noise reduction
+    description: >-
+      Noise reduction applied to your speech before the turn-detection VAD. "off"
+      (default), "near_field" for talking close to the device, "far_field" for
+      across the room. May reduce false triggers; the device already does its own
+      XMOS noise suppression, so the benefit varies — try it if the VAD misfires.
   websocket_port:
     name: WebSocket port
     description: >-

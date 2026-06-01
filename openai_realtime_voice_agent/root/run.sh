@@ -7,6 +7,9 @@ OPENAI_MODEL=$(bashio::config 'openai_model')
 OPENAI_MODEL_CUSTOM=$(bashio::config 'openai_model_custom')
 OPENAI_VOICE=$(bashio::config 'openai_voice')
 OPENAI_VOICE_CUSTOM=$(bashio::config 'openai_voice_custom')
+OPENAI_SPEED=$(bashio::config 'openai_speed')
+MAX_OUTPUT_TOKENS=$(bashio::config 'max_output_tokens')
+NOISE_REDUCTION=$(bashio::config 'noise_reduction')
 WEBSOCKET_PORT=$(bashio::config 'websocket_port')
 DEVICE_INPUT_SAMPLE_RATE=$(bashio::config 'device_input_sample_rate')
 HA_MCP_URL=$(bashio::config 'ha_mcp_url')
@@ -57,6 +60,9 @@ export OPENAI_MODEL
 export OPENAI_MODEL_CUSTOM
 export OPENAI_VOICE
 export OPENAI_VOICE_CUSTOM
+export OPENAI_SPEED
+export MAX_OUTPUT_TOKENS
+export NOISE_REDUCTION
 export WEBSOCKET_PORT
 export DEVICE_INPUT_SAMPLE_RATE
 export LONGLIVED_TOKEN

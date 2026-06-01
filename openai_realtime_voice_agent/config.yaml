@@ -1,5 +1,5 @@
 name: OpenAI Realtime Voice Agent
-version: "0.4.21"
+version: "0.4.22"
 slug: openai_realtime_voice_agent
 description: Voice control using OpenAI Realtime API with WebSocket support for ESP32 devices
 url: https://github.com/fjfricke/ha-openai-realtime
@@ -27,6 +27,16 @@ options:
   openai_voice: "marin"
   # Used ONLY when openai_voice is set to "custom".
   openai_voice_custom: ""
+  # Playback speed of the assistant's voice (post-generation rate). 1.0 = normal;
+  # 0.25 = slowest, 1.5 = fastest. Handy for accessibility / preference.
+  openai_speed: 1.0
+  # Cap the assistant's reply length in output tokens. 0 = unlimited (API default).
+  # Set e.g. 1024 to stop a runaway monologue and bound per-response token cost.
+  max_output_tokens: 0
+  # Input noise reduction applied before the server VAD. "off" (default),
+  # "near_field" for close-talk, "far_field" for across-the-room. May reduce VAD
+  # false-triggers; the device already does XMOS noise suppression, so gains vary.
+  noise_reduction: "off"
   websocket_port: 8080
   # PCM sample rate (Hz) the device microphone streams in. The Home Assistant
   # Voice PE firmware (va_client) sends 16000; the backend resamples to the
@@ -164,6 +174,9 @@ schema:
   openai_model_custom: str
   openai_voice: "list(marin|cedar|alloy|ash|ballad|coral|echo|sage|shimmer|verse|custom)"
   openai_voice_custom: str
+  openai_speed: float(0.25,1.5)
+  max_output_tokens: int(0,4096)
+  noise_reduction: "list(off|near_field|far_field)"
   websocket_port: int(1024,65535)
   device_input_sample_rate: int(8000,48000)
   ha_mcp_url: str

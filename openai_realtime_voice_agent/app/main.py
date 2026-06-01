@@ -166,6 +166,26 @@ class Application:
         openai_model = _resolve_choice("OPENAI_MODEL", "OPENAI_MODEL_CUSTOM", "gpt-realtime-2")
         openai_voice = _resolve_choice("OPENAI_VOICE", "OPENAI_VOICE_CUSTOM", "marin")
 
+        # Playback speed (post-generation rate): 0.25-1.5, 1.0 = normal. Clamped.
+        try:
+            openai_speed = float(os.environ.get("OPENAI_SPEED", "1.0"))
+        except (TypeError, ValueError):
+            openai_speed = 1.0
+        openai_speed = max(0.25, min(1.5, openai_speed))
+        # Max reply length in output tokens. 0 = unlimited (API default). Caps a
+        # runaway monologue + bounds per-response output-token cost.
+        try:
+            max_output_tokens = int(os.environ.get("MAX_OUTPUT_TOKENS", "0"))
+        except (TypeError, ValueError):
+            max_output_tokens = 0
+        # Pass None when 0/unset so SessionProperties omits it (API default "inf").
+        max_output_tokens = max_output_tokens if max_output_tokens > 0 else None
+        # Input noise reduction: "near_field" | "far_field" | "" (off). Anything
+        # else is treated as off so a typo can't reach the API.
+        noise_reduction = os.environ.get("NOISE_REDUCTION", "").strip().lower()
+        if noise_reduction not in ("near_field", "far_field"):
+            noise_reduction = ""
+
         # Optional allow-list to trim the (large) ha-mcp tool set exposed to the
         # model. Comma-separated tool names; empty means expose all.
         mcp_tool_allowlist = [t.strip() for t in os.environ.get("MCP_TOOL_ALLOWLIST", "").split(",") if t.strip()]
@@ -283,6 +303,9 @@ class Application:
         self.instructions = instructions
         self.model = openai_model
         self.voice = openai_voice
+        self.openai_speed = openai_speed
+        self.max_output_tokens = max_output_tokens
+        self.noise_reduction = noise_reduction
         self.mcp_tool_allowlist = mcp_tool_allowlist
         self.mcp_client = mcp_client
         self.enable_web_search = enable_web_search
@@ -358,6 +381,7 @@ class Application:
                 TurnDetection,
                 SemanticTurnDetection,
                 InputAudioTranscription,
+                InputAudioNoiseReduction,
             )
             
             # Collect all tool definitions for session properties. The
@@ -453,14 +477,27 @@ class Application:
                 else None
             )
 
+            # Optional near/far-field input noise reduction (helps the VAD reject
+            # background noise / residual speaker leak). None = off (default).
+            noise_reduction = (
+                InputAudioNoiseReduction(type=self.noise_reduction)
+                if self.noise_reduction
+                else None
+            )
+
             session_properties = SessionProperties(
                 instructions=self.instructions,
+                # Cap the reply length: bounds runaway monologues + per-response
+                # output-token cost. None = unlimited (the API default "inf").
+                max_output_tokens=self.max_output_tokens,
                 audio=AudioConfiguration(
                     input=AudioInput(
                         turn_detection=turn_detection,
                         transcription=transcription,
+                        noise_reduction=noise_reduction,
                     ),
-                    output=AudioOutput(voice=self.voice)
+                    # speed is a post-generation playback rate (0.25-1.5, 1.0 = normal).
+                    output=AudioOutput(voice=self.voice, speed=self.openai_speed)
                 ),
                 tools=all_tools
             )
