@@ -12,6 +12,10 @@ to this add-on and plays the reply back. **This add-on is designed for that Voic
 firmware** (a thin client that talks a small WebSocket protocol); it is not a
 drop-in for the stock HA voice pipeline.
 
+> **You need both halves.** This add-on does nothing without the **Voice PE firmware**
+> that streams audio to it →
+> **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**.
+
 ## What it does
 
 - **Natural voice conversations** with `gpt-realtime-2` (speech in → speech out, no
@@ -32,7 +36,9 @@ drop-in for the stock HA voice pipeline.
 2. Install **OpenAI Realtime 2 Voice Agent** and open its **Configuration** tab.
 3. Paste your **OpenAI API key**, install the HA **MCP Server** integration, expose
    a few entities to Assist, and **Start** the add-on.
-4. Flash the Voice PE firmware (see the maintainer / the project's `INSTALL.md`).
+4. Flash the **Voice PE firmware** from
+   **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**
+   (one-click adopt-and-update in ESPHome Builder; full steps in that repo).
 
 Full step-by-step instructions are on the **Documentation** tab (`DOCS.md`).
 

@@ -125,11 +125,12 @@ This add-on expects the custom **Voice PE firmware** that turns the device into 
 thin client (it streams mic audio here and plays the reply). That firmware:
 
 - is **specific to the Home Assistant Voice PE** hardware (ESP32-S3 + XMOS), and
-- lives in a **separate, private repository**.
+- lives in its own **public** repository:
+  **[xandervanerven/home-assistant-voice-pe](https://github.com/xandervanerven/home-assistant-voice-pe)**.
 
-If you're setting this up from a friend's share, ask the maintainer for the firmware
-config and the GitHub access token it needs — they have the full from-scratch
-install guide (flashing + adopting the device in ESPHome Builder).
+You flash it once via a tiny per-device "stub" in ESPHome Builder; after that, firmware
+updates are **one click** — no tokens, no copy-pasting. That repo has the full
+from-scratch guide (flashing + adopting the device in ESPHome Builder).
 
 ## Credits
 
