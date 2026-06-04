@@ -221,11 +221,12 @@ class Application:
         mcp_tool_allowlist = [t.strip() for t in os.environ.get("MCP_TOOL_ALLOWLIST", "").split(",") if t.strip()]
         
         # Web search: let the assistant look things up online (weather, news,
-        # facts). Off by default so the add-on Update doesn't silently change
-        # behaviour. When on, a `web_search` function tool calls OpenAI's
-        # Responses web_search built-in tool server-side (using OPENAI_API_KEY)
-        # and returns a short spoken answer. The model is configurable so a
-        # different price/quality — or a renamed model — needs no code change.
+        # facts). ON by default; existing installs keep their saved option, so an
+        # Update won't silently flip it. When on, a `web_search` function tool
+        # calls OpenAI's Responses web_search built-in tool server-side (using
+        # OPENAI_API_KEY) and returns a short spoken answer. The model is
+        # configurable so a different price/quality — or a renamed model — needs
+        # no code change.
         enable_web_search = os.environ.get("ENABLE_WEB_SEARCH", "true").lower() == "true"
         web_search_model = _resolve_choice(
             "WEB_SEARCH_MODEL", "WEB_SEARCH_MODEL_CUSTOM", "gpt-5.5"
