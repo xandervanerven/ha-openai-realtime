@@ -1,6 +1,6 @@
-name: OpenAI Realtime 2 Voice Agent
+name: OpenAI Realtime 2 Voice Agent (dev)
 version: "0.4.26"
-slug: openai_realtime_voice_agent
+slug: openai_realtime_voice_agent_dev
 description: Talk to your home with OpenAI gpt-realtime-2 — a voice agent for the Home Assistant Voice PE, with live device control and web search.
 url: https://github.com/xandervanerven/ha-openai-realtime
 arch:
@@ -37,7 +37,7 @@ options:
   # "near_field" for close-talk, "far_field" for across-the-room. May reduce VAD
   # false-triggers; the device already does XMOS noise suppression, so gains vary.
   noise_reduction: "off"
-  websocket_port: 8080
+  websocket_port: 8081  # dev add-on port (stable uses 8080)
   # PCM sample rate (Hz) the device microphone streams in. The Home Assistant
   # Voice PE firmware (va_client) sends 16000; the backend resamples to the
   # 24000 OpenAI requires. Only change if you flash a device that sends a
