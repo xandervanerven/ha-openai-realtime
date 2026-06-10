@@ -2,6 +2,19 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.4.29 (dev channel)
+
+- **Cleaner Configuration tab.** Options are now grouped and ordered (Basics →
+  Model & voice → Conversation → Web search → Audio → Home Assistant →
+  Advanced → Debug) and every description is rewritten in plain, practical
+  language. A full Dutch translation is included (shown automatically when
+  your HA is set to Dutch).
+- Confusing or broken switches were removed (they are now fixed at their only
+  sane value); the legacy server_vad fields moved to Advanced and stay hidden
+  until you enable "Show unused optional configuration options".
+- Friendlier defaults for new installs: follow-up mic delay 200 ms and
+  playback buffer 150 ms (existing installs keep their own values).
+
 ## 0.4.28 (dev channel)
 
 - **"Stop" during the after-reply listening window now actually stops.** The
