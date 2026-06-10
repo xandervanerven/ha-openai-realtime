@@ -2,6 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.4.31 (dev channel)
+
+- **Fixed: an answer could cut off mid-sentence and the assistant then went
+  deaf.** When your sentence was split into two turns (a pause at the wrong
+  moment), OpenAI rejected the second answer attempt and the session's reader
+  stopped — killing the answer that was playing and ignoring everything after
+  it. Such harmless protocol races are now ignored and the playing answer
+  simply continues.
+
 ## 0.4.30 (dev channel)
 
 - The four "custom" text fields (model / voice / search model / transcript
