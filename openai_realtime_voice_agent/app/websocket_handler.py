@@ -170,10 +170,16 @@ class ConnectionRecovery(FrameProcessor):
     REFRESH_QUIET_S = 60.0    # ... and no mic audio flowed for this long
     REFRESH_CHECK_S = 60.0    # poll cadence of the background check
 
-    def __init__(self, openai_service, emit_idle=None, **kwargs):
+    def __init__(self, openai_service, emit_idle=None, phase_emitter=None, **kwargs):
         super().__init__(**kwargs)
         self._service = openai_service
         self._emit_idle = emit_idle  # async callable(value:str), e.g. broadcast_phase
+        # Preferred idle route: PhaseEmitter.force_idle() keeps the emitter's
+        # phase state consistent AND suppresses the racing `thinking` from VAD
+        # stop events still in flight (observed: a raw broadcast idle was
+        # overridden 400 ms later and the device sat in `thinking` with an
+        # open mic for 44 s). emit_idle stays as fallback wiring.
+        self._phase_emitter = phase_emitter
         self._reconnecting = False
         self._last_attempt = 0.0
         self._last_idle_unstick = 0.0
@@ -244,11 +250,10 @@ class ConnectionRecovery(FrameProcessor):
                 f"({reason[:90]}) — reconnecting…"
             )
             # Unstick the device first, regardless of how the reconnect goes.
-            if self._emit_idle is not None:
-                try:
-                    await self._emit_idle("idle")
-                except Exception as e:
-                    logger.warning(f"⚠️ could not emit idle during recovery: {e!r}")
+            try:
+                await self._go_idle(f"reconnect: {reason[:60]}")
+            except Exception as e:
+                logger.warning(f"⚠️ could not emit idle during recovery: {e!r}")
             reset = getattr(self._service, "reset_conversation", None)
             if reset is None:
                 logger.error("❌ service has no reset_conversation(); cannot reconnect in place")
@@ -297,6 +302,13 @@ class ConnectionRecovery(FrameProcessor):
             except Exception as e:
                 logger.warning(f"⚠️ proactive refresh loop error: {e!r}")
 
+    async def _go_idle(self, reason: str) -> None:
+        """Put the device in idle for a dead turn — via PhaseEmitter when wired."""
+        if self._phase_emitter is not None:
+            await self._phase_emitter.force_idle(reason)
+        elif self._emit_idle is not None:
+            await self._emit_idle("idle")
+
     async def _unstick_idle(self, reason: str):
         """Emit `idle` to the device after a turn-ending error (e.g. rate limit).
 
@@ -305,8 +317,7 @@ class ConnectionRecovery(FrameProcessor):
         """
         try:
             logger.warning(f"⚠️ turn ended on error, emitting idle to unstick device ({reason[:90]})")
-            if self._emit_idle is not None:
-                await self._emit_idle("idle")
+            await self._go_idle(f"turn ended on error: {reason[:60]}")
         except Exception as e:
             logger.warning(f"⚠️ could not emit idle after turn-ending error: {e!r}")
 
@@ -436,12 +447,19 @@ class WebSocketHandler:
         # transport) so every later stage — VAD, context aggregator, OpenAI
         # service — sees correctly-rated 24 kHz audio instead of the device's
         # raw 16 kHz (which OpenAI would otherwise read 1.5x too fast).
+        # Built early so ConnectionRecovery can route its unstick/reconnect
+        # idle through PhaseEmitter.force_idle() (consistent phase state +
+        # racing-`thinking` suppression); it is APPENDED near the end of the
+        # pipeline below, before transport.output().
+        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase)
+
         pipeline_components = [
             transport.input(),
             # Watch for OpenAI connection-death ErrorFrames (they travel upstream
             # to the task source, so place this upstream of the service) and
             # reconnect in place. Without it a 1011/1001 drop bricks the session.
-            ConnectionRecovery(openai_service=openai_service, emit_idle=self.broadcast_phase),
+            ConnectionRecovery(openai_service=openai_service, emit_idle=self.broadcast_phase,
+                               phase_emitter=phase_emitter),
             InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
             input_activity_tracker,
         ]
@@ -490,7 +508,8 @@ class WebSocketHandler:
         # the device, derived from Pipecat speaking frames as they pass
         # downstream. Placed before transport.output() so it sees both the
         # user (UserStarted/Stopped) and bot (BotStarted/Stopped) frames.
-        pipeline_components.append(PhaseEmitter(send_phase=self.broadcast_phase))
+        # (Constructed above, before ConnectionRecovery.)
+        pipeline_components.append(phase_emitter)
 
         # Add output audio recorder to capture ONLY OutputAudioRawFrame
         output_recorder = self.audio_recording_service.get_output_recorder() if self.audio_recording_service else None

@@ -2,6 +2,17 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.3 (dev channel)
+
+- **The device can no longer get stuck "thinking".** When a turn died without
+  an answer (for example on an OpenAI rate limit during rapid-fire commands),
+  the LED could keep blinking "thinking" with the microphone left open — until
+  you woke the device again. A watchdog now declares such a turn dead after
+  15 seconds of model silence and returns the device to rest, and the
+  rate-limit recovery itself no longer loses the race against late
+  voice-detection events (the cause of one observed 44-second hang). Slow
+  tools such as web search are explicitly exempt and keep their time.
+
 ## 0.5.2 (dev channel)
 
 - **No more deaf sessions.** If the connection to OpenAI silently died (network

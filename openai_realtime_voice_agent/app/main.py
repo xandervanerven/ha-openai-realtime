@@ -11,6 +11,7 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transports.websocket.server import WebsocketServerTransport
 from app.mcp_service import HomeAssistantMCPService
+from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
 from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
 from app.audio_recording_service import AudioRecordingService
@@ -173,9 +174,23 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
         search), so letting them finish and report the truth always beats
         killing them halfway. This single override covers every registration
         path (MCP tools via pipecat's MCPClient, web_search, disconnect).
+
+        The handler is also wrapped to tick TURN_LIVENESS around its run, so
+        the PhaseEmitter's thinking-watchdog knows a tool is in flight and a
+        slow tool (web search: 10-20 s of pipeline silence) is never mistaken
+        for a dead turn. All our handlers use the single-param
+        FunctionCallParams signature, so the wrapper does too (pipecat
+        inspects the signature to pick the calling convention).
         """
+        async def liveness_tracked(params):
+            TURN_LIVENESS.tool_started()
+            try:
+                return await handler(params)
+            finally:
+                TURN_LIVENESS.tool_finished()
+
         super().register_function(
-            function_name, handler, start_callback, cancel_on_interruption=False
+            function_name, liveness_tracked, start_callback, cancel_on_interruption=False
         )
 
     async def _receive_task_handler(self):  # type: ignore[override]
