@@ -32,10 +32,23 @@ class RawAudioSerializer(FrameSerializer):
         # InterruptionFrame (StartInterruptionFrame) on every user-start-speaking,
         # so reacting to that class would cancel the response on ANY speech.
         self._on_interrupt = None
+        # Async callback invoked when the device sends {"type":"start"}. NB the
+        # va_client sends this once per WebSocket CONNECTION (on connect), NOT
+        # per wake-word session. Used to start every (re)connection with a
+        # clean OpenAI input buffer — a reconnect mid-utterance leaves half an
+        # utterance behind, which session reuse would replay ahead of the next
+        # turn. The per-WAKE stale-buffer case (follow-up window cutting a
+        # sentence; observed live 2026-06-12) is covered separately by
+        # ConnectionRecovery's mic-resume gap detector in websocket_handler.py.
+        self._on_session_start = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
         self._on_interrupt = handler
+
+    def set_session_start_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'start'."""
+        self._on_session_start = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -72,6 +85,16 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_interrupt()
                     except Exception as e:
                         logger.warning(f"⚠️ device interrupt handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "start":
+                # Sent by va_client once per WS connection (on connect). Mic
+                # audio only flows after a wake, so clearing the stale OpenAI
+                # input buffer here cannot eat new speech.
+                logger.info("🎬 device connection start received")
+                if self._on_session_start is not None:
+                    try:
+                        await self._on_session_start()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device session-start handler failed: {e!r}")
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 

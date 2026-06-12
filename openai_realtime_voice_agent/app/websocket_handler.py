@@ -169,6 +169,12 @@ class ConnectionRecovery(FrameProcessor):
     REFRESH_AGE_S = 55 * 60   # refresh once the session is this old
     REFRESH_QUIET_S = 60.0    # ... and no mic audio flowed for this long
     REFRESH_CHECK_S = 60.0    # poll cadence of the background check
+    # Mic frames arrive ~every 100 ms while the device streams; a gap of
+    # seconds means the mic gate was CLOSED in between (reply, follow-up
+    # expiry, session end). Anything still uncommitted in OpenAI's input
+    # buffer when audio resumes is an orphaned fragment — see
+    # _clear_stale_input.
+    MIC_RESUME_CLEAR_GAP_S = 2.0
 
     def __init__(self, openai_service, emit_idle=None, phase_emitter=None, **kwargs):
         super().__init__(**kwargs)
@@ -199,7 +205,11 @@ class ConnectionRecovery(FrameProcessor):
         if self._refresh_task is None:
             self._refresh_task = asyncio.create_task(self._proactive_refresh_loop())
         if isinstance(frame, InputAudioRawFrame):
-            self._last_input_audio = time.monotonic()
+            now = time.monotonic()
+            gap = now - self._last_input_audio
+            self._last_input_audio = now
+            if gap >= self.MIC_RESUME_CLEAR_GAP_S and not self._reconnecting:
+                await self._clear_stale_input(gap)
         if isinstance(frame, ErrorFrame) and not self._reconnecting:
             msg = str(getattr(frame, "error", "") or "")
             # Two reconnect triggers:
@@ -301,6 +311,33 @@ class ConnectionRecovery(FrameProcessor):
                 raise
             except Exception as e:
                 logger.warning(f"⚠️ proactive refresh loop error: {e!r}")
+
+    async def _clear_stale_input(self, gap_s: float) -> None:
+        """Drop uncommitted OpenAI input audio when the mic resumes after a gap.
+
+        The device's mic gate closes without telling the cloud (reply
+        started, follow-up window expired, session ended). Speech cut off
+        mid-utterance by that close stays UNCOMMITTED in OpenAI's
+        input_audio_buffer — with session reuse, the next mic audio (a new
+        wake, or the follow-up reopening) lands right behind it, the server
+        VAD then sees the old fragment as a completed turn, and the model
+        spontaneously answers a minutes-old half sentence the instant the
+        user says the wake word (observed live 2026-06-12 22:04). We sit
+        upstream of the OpenAI service, so clearing here wins the race
+        against the resumed audio's appends. Conversation context is
+        untouched — only stale, never-to-be-completed mic audio is dropped.
+        """
+        try:
+            await asyncio.wait_for(
+                self._service.send_client_event(openai_rt_events.InputAudioBufferClearEvent()),
+                timeout=2.0,
+            )
+            logger.info(
+                f"🧹 mic resumed after {gap_s:.0f}s gap → input_audio_buffer.clear "
+                f"(drop stale uncommitted audio)"
+            )
+        except Exception as e:
+            logger.debug(f"🧹 mic-resume input clear no-op ({e!r})")
 
     async def _go_idle(self, reason: str) -> None:
         """Put the device in idle for a dead turn — via PhaseEmitter when wired."""
@@ -620,8 +657,22 @@ class WebSocketHandler:
             except Exception as e:
                 logger.info(f"🛑 post-interrupt racing-response cancel no-op ({e!r})")
 
+        async def _on_device_session_start():
+            # va_client sends {"type":"start"} once per WebSocket CONNECTION
+            # (on connect) — NOT per wake. A reconnect mid-utterance (wifi
+            # blip, backend restart with session reuse) can leave half an
+            # utterance in OpenAI's input buffer; start every (re)connection
+            # with a clean one. The per-WAKE stale-buffer case is covered by
+            # ConnectionRecovery's mic-resume gap detector.
+            try:
+                await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
+                logger.info("🎬 device (re)connected → input_audio_buffer.clear (clean start)")
+            except Exception as e:
+                logger.debug(f"🎬 connect-time input clear no-op ({e!r})")
+
         if self._serializer is not None:
             self._serializer.set_interrupt_handler(_on_device_interrupt)
+            self._serializer.set_session_start_handler(_on_device_session_start)
 
         return pipeline, runner, task
     

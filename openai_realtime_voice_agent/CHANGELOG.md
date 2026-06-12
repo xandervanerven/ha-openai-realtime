@@ -2,6 +2,16 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.5 (dev channel)
+
+- **The assistant no longer spontaneously answers an old, half-finished
+  sentence the moment you say the wake word.** When the microphone closed
+  mid-sentence (for example because the follow-up window expired), the cut-off
+  audio stayed behind in OpenAI's input buffer and was "completed" minutes
+  later by the next wake — the assistant then immediately replied to it. The
+  buffer is now cleared whenever the microphone resumes after a pause, and on
+  every device (re)connect. Your conversation memory is unaffected.
+
 ## 0.5.4 (dev channel)
 
 - **Long web searches now get all the time they need.** While a tool call is
