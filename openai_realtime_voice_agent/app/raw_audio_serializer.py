@@ -41,6 +41,11 @@ class RawAudioSerializer(FrameSerializer):
         # sentence; observed live 2026-06-12) is covered separately by
         # ConnectionRecovery's mic-resume gap detector in websocket_handler.py.
         self._on_session_start = None
+        # Async callback for {"type":"flush"} — the device sends this when a
+        # follow-up window times out mid-stream, to drop any uncommitted partial
+        # utterance from OpenAI's input buffer AT THE CUT-OFF (so no reactive
+        # clear-on-wake is needed). Set by WebSocketHandler.build_pipeline.
+        self._on_mic_flush = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
@@ -49,6 +54,10 @@ class RawAudioSerializer(FrameSerializer):
     def set_session_start_handler(self, handler):
         """Register the async no-arg callback fired on a device 'start'."""
         self._on_session_start = handler
+
+    def set_mic_flush_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'flush'."""
+        self._on_mic_flush = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -95,6 +104,16 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_session_start()
                     except Exception as e:
                         logger.warning(f"⚠️ device session-start handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "flush":
+                # A follow-up window timed out mid-stream: drop any uncommitted
+                # partial utterance at the cut-off so a later wake can't complete
+                # it into a stale answer.
+                logger.info("🧽 device mic flush received")
+                if self._on_mic_flush is not None:
+                    try:
+                        await self._on_mic_flush()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device mic-flush handler failed: {e!r}")
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 

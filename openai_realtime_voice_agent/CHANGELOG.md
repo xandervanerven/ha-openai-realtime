@@ -2,6 +2,16 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.11 (dev channel)
+
+- **Fewer "talks right after the wake word without you saying anything"
+  moments.** The previous approach cleared the audio buffer on every wake,
+  which could disturb the speech detector and make it answer a stray noise. The
+  device now drops a leftover half-sentence at the exact moment a follow-up
+  window closes instead, so nothing needs clearing on the wake — the detector
+  is left undisturbed. **Requires the matching firmware update** (the device and
+  add-on speak a new little signal to each other).
+
 ## 0.5.10 (dev channel)
 
 - **The light ring keeps "thinking" during a web search** instead of dropping to
