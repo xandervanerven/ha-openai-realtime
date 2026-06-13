@@ -2,6 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.8 (dev channel)
+
+- **No more "answers its previous question out of nowhere" on the wake word.**
+  After rapid re-wakes, a half-finished turn could stay open on OpenAI's side
+  and close seconds later, making the assistant repeat its last answer to
+  nobody. The add-on now tracks whether you've actually spoken since the wake
+  and cancels any answer that appears without real speech — so a phantom turn
+  can never reach you.
+
 ## 0.5.7 (dev channel)
 
 - **New "Wake mic delay" setting.** Just like the follow-up mic delay, this is

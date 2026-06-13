@@ -20,7 +20,7 @@ from pipecat.services.openai.realtime import events as openai_rt_events
 from app.raw_audio_serializer import RawAudioSerializer
 from app.session_manager import SessionManager
 from app.audio_recording_service import AudioRecordingService
-from app.phase_emitter import PhaseEmitter
+from app.phase_emitter import PhaseEmitter, PHANTOM_GUARD
 from app.transcript_logger import TranscriptLogger
 from app.debug_frame_logger import DebugFrameLogger
 
@@ -327,6 +327,12 @@ class ConnectionRecovery(FrameProcessor):
         against the resumed audio's appends. Conversation context is
         untouched — only stale, never-to-be-completed mic audio is dropped.
         """
+        # Arm the phantom-turn guard: from this wake/mic-resume on, a response
+        # is only legitimate once REAL user speech has started. A dangling
+        # server-VAD turn that closes later (and the input_audio_buffer.clear
+        # below can't reach) would otherwise auto-create a phantom response —
+        # see PhantomTurnGuard. Cleared by the next UserStartedSpeakingFrame.
+        PHANTOM_GUARD.note_wake_clear()
         try:
             await asyncio.wait_for(
                 self._service.send_client_event(openai_rt_events.InputAudioBufferClearEvent()),
@@ -646,11 +652,30 @@ class WebSocketHandler:
 
         @openai_service.event_handler("on_conversation_item_created")
         async def _kill_racing_response(service, item_id, item):
-            # Pipecat fires this for every conversation.item.added; only an
-            # ASSISTANT item right after a device interrupt is the racing
-            # response to the stop word the user just cancelled.
+            # Pipecat fires this for every conversation.item.added; we only act
+            # on ASSISTANT items (a response being created).
             if getattr(item, "role", None) != "assistant":
                 return
+            # Phantom-turn guard: an assistant response with NO real user speech
+            # since the last wake / mic-resume is a dangling server-VAD turn
+            # closing late (it would repeat the previous answer out of nowhere).
+            # Cancel it. This is timing-independent — unlike the kill-window
+            # below, it catches a phantom that arrives many seconds after the
+            # wake. A legitimate turn cleared the flag via UserStartedSpeaking.
+            if PHANTOM_GUARD.is_phantom():
+                PHANTOM_GUARD.real_speech_started()  # consume — guard this once
+                try:
+                    await openai_service.send_client_event(openai_rt_events.ResponseCancelEvent())
+                    logger.info(
+                        "👻 phantom turn (no real user speech since the wake) "
+                        "→ response.cancel"
+                    )
+                except Exception as e:
+                    logger.info(f"👻 phantom-turn cancel no-op ({e!r})")
+                return
+            # Racing-response kill window: an assistant item right after a device
+            # interrupt is the racing response to the stop word the user just
+            # cancelled.
             if time.monotonic() >= _interrupt_kill_until["t"]:
                 return
             try:
