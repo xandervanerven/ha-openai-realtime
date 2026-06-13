@@ -105,45 +105,6 @@ class TurnLiveness:
 TURN_LIVENESS = TurnLiveness()
 
 
-class PhantomTurnGuard:
-    """Guards against a dangling server-VAD turn producing a phantom response.
-
-    Failure mode (observed live 2026-06-13): a server-VAD speech-START that
-    never got a clean speech-STOP before its turn was abandoned (rapid
-    re-wakes) stays OPEN on OpenAI's side and closes seconds later — with
-    `semantic_vad_create_response=true` OpenAI then auto-creates a response to
-    essentially-empty audio, and the model repeats its last answer out of
-    nowhere the moment you say the wake word. `input_audio_buffer.clear` (the
-    mic-resume fix) drops the buffered audio but NOT OpenAI's open VAD segment,
-    and the phantom response can arrive many seconds later (7.5 s in the
-    capture) — too late for any kill-window.
-
-    So instead of trying to reset OpenAI's VAD state, we track whether REAL
-    user speech has started since the last wake / mic-resume. An assistant
-    response created with NO real speech since then is a phantom and gets
-    cancelled (see the on_conversation_item_created handler). A legitimate turn
-    always has a fresh UserStartedSpeakingFrame before its response, which
-    clears the flag. Module-level singleton: one pipeline per process.
-    """
-
-    def __init__(self) -> None:
-        # True = a wake/mic-resume cleared the buffer and no real user speech
-        # has started since, so any response that appears now is a phantom.
-        self.awaiting_real_speech = False
-
-    def note_wake_clear(self) -> None:
-        self.awaiting_real_speech = True
-
-    def real_speech_started(self) -> None:
-        self.awaiting_real_speech = False
-
-    def is_phantom(self) -> bool:
-        return self.awaiting_real_speech
-
-
-PHANTOM_GUARD = PhantomTurnGuard()
-
-
 class PhaseEmitter(FrameProcessor):
     """Forwards phase transitions to the device as JSON text frames."""
 
@@ -272,9 +233,6 @@ class PhaseEmitter(FrameProcessor):
 
         if isinstance(frame, UserStartedSpeakingFrame):
             self._suppress_thinking = False
-            # Real user speech began → this turn is legitimate, so a response
-            # that follows is not a phantom (clears the dangling-turn guard).
-            PHANTOM_GUARD.real_speech_started()
             self._cancel_pending_idle()
             self._cancel_watchdog()
             await self._emit("listening")

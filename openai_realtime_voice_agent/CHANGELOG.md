@@ -2,6 +2,16 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.9 (dev channel)
+
+- **Web search works again.** The 0.5.8 "phantom turn" guard was too aggressive:
+  during a web search (a multi-second tool call) it mistook the search result
+  for a phantom and cancelled the answer, so you got no reply. The guard was a
+  fragile heuristic that couldn't tell a genuine wake from a mid-conversation
+  microphone re-open, so it has been removed. The other safeguards against
+  "answers out of nowhere" (stale-audio clearing, the listening-only
+  suppression lift, and the wake/follow-up echo delays) stay in place.
+
 ## 0.5.8 (dev channel)
 
 - **No more "answers its previous question out of nowhere" on the wake word.**
