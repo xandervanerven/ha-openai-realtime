@@ -2,6 +2,14 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.7 (dev channel)
+
+- **New "Wake mic delay" setting.** Just like the follow-up mic delay, this is
+  a short pause after the wake chime before the microphone opens, so the
+  chime's own sound can't leak in and be mistaken for a question (which made
+  the assistant occasionally answer "nobody" right after the wake word).
+  Default 700 ms; needs the matching firmware update to take effect.
+
 ## 0.5.6 (dev channel)
 
 - **The "Follow-up mic delay" default went from 200 to 700 ms.** At 200–300 ms

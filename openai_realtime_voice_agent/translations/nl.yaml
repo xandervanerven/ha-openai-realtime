@@ -86,6 +86,14 @@ configuration:
       (300–500) maakt doorpraten vlotter, maar dan kan de assistent zijn
       eigen echo gaan beantwoorden — verhoog weer als hij soms "tegen
       niemand" praat of zichzelf herhaalt.
+  wake_open_delay_ms:
+    name: "💬 Gesprek · Wake-microfoon-vertraging (ms)"
+    description: >-
+      Dezelfde echo-bescherming vlak na het wake-woord: een korte pauze na de
+      wake-toon voordat de microfoon opengaat, zodat het geluid van de toon
+      zelf niet naar binnen lekt en als vraag wordt opgevat. 700 (standaard)
+      is veilig. Lager voor een vlottere wake; verhoog als het uitspreken van
+      het wake-woord soms een antwoord op niets uitlokt.
   vad_eagerness:
     name: "💬 Gesprek · Beurtwissel-snelheid"
     description: >-

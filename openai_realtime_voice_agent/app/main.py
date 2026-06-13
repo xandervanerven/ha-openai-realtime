@@ -360,10 +360,19 @@ class Application:
         # hardware tail so the mic doesn't catch the reply's own end. Sent to the
         # device in `hello`; lower = snappier, higher = safer against echo.
         try:
-            follow_up_open_delay_ms = int(os.environ.get("FOLLOW_UP_OPEN_DELAY_MS", "200"))
+            follow_up_open_delay_ms = int(os.environ.get("FOLLOW_UP_OPEN_DELAY_MS", "700"))
         except (TypeError, ValueError):
-            follow_up_open_delay_ms = 200
+            follow_up_open_delay_ms = 700
         follow_up_open_delay_ms = max(0, min(5000, follow_up_open_delay_ms))
+        # Same idea at the WAKE boundary: delay (ms) after the wake chime before
+        # the mic opens, so the chime's own hardware tail doesn't leak into the
+        # fresh mic and become a ghost turn (the wake-path twin of
+        # follow_up_open_delay_ms — the yaml wake handler reads it via a lambda).
+        try:
+            wake_open_delay_ms = int(os.environ.get("WAKE_OPEN_DELAY_MS", "700"))
+        except (TypeError, ValueError):
+            wake_open_delay_ms = 700
+        wake_open_delay_ms = max(0, min(5000, wake_open_delay_ms))
         # Playback jitter buffer (ms): the device holds incoming TTS until this
         # much has accumulated before playing, so a brief network hiccup doesn't
         # dry out the speaker chain mid-word (audible crackle). Sent in `hello`.
@@ -419,12 +428,14 @@ class Application:
             audio_recording_service=self.audio_recording_service,
             follow_up_ms=follow_up_ms,
             follow_up_open_delay_ms=follow_up_open_delay_ms,
+            wake_open_delay_ms=wake_open_delay_ms,
             playback_prebuffer_ms=playback_prebuffer_ms,
         )
         logger.info(
             f"🔁 Follow-up window: {follow_up_listen_seconds}s "
             f"({'enabled' if follow_up_ms > 0 else 'disabled — turn-based'}), "
             f"mic-open delay {follow_up_open_delay_ms}ms, "
+            f"wake-open delay {wake_open_delay_ms}ms, "
             f"playback prebuffer {playback_prebuffer_ms}ms"
         )
         self.websocket_transport = self.websocket_handler.create_transport()

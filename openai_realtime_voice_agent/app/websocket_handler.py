@@ -369,7 +369,8 @@ class WebSocketHandler:
         session_manager: Optional[SessionManager] = None,
         audio_recording_service: Optional[AudioRecordingService] = None,
         follow_up_ms: int = 0,
-        follow_up_open_delay_ms: int = 1500,
+        follow_up_open_delay_ms: int = 700,
+        wake_open_delay_ms: int = 700,
         playback_prebuffer_ms: int = 0,
     ):
         """
@@ -386,6 +387,9 @@ class WebSocketHandler:
             follow_up_open_delay_ms: How long (ms) the device waits after a reply
                 finishes before opening that follow-up mic (bridges the speaker
                 hardware tail). Sent in the `hello` handshake.
+            wake_open_delay_ms: How long (ms) the device waits after the wake
+                chime before opening the mic, so the chime's hardware tail can't
+                leak into the fresh mic as a ghost turn. Sent in `hello`.
         """
         self.host = host
         self.port = port
@@ -393,6 +397,7 @@ class WebSocketHandler:
         self.audio_recording_service = audio_recording_service
         self.follow_up_ms = max(0, int(follow_up_ms))
         self.follow_up_open_delay_ms = max(0, int(follow_up_open_delay_ms))
+        self.wake_open_delay_ms = max(0, int(wake_open_delay_ms))
         self.playback_prebuffer_ms = max(0, int(playback_prebuffer_ms))
 
         self.transport: Optional[WebsocketServerTransport] = None
@@ -762,6 +767,7 @@ class WebSocketHandler:
                     "audio_out": "pcm",
                     "follow_up_ms": self.follow_up_ms,
                     "follow_up_open_delay_ms": self.follow_up_open_delay_ms,
+                    "wake_open_delay_ms": self.wake_open_delay_ms,
                     "playback_prebuffer_ms": self.playback_prebuffer_ms,
                 },
             )
