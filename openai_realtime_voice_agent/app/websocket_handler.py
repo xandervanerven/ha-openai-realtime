@@ -648,16 +648,39 @@ class WebSocketHandler:
             # cut-off, so a later wake can't "complete" it into a stale answer.
             # This replaced the reactive clear-on-mic-resume, which fired on
             # every wake and disturbed the server VAD → spurious garbage commits.
+            # Also a turn boundary for the dangling-VAD guard: the follow-up
+            # closed without speech, so any later server-VAD stop is dangling.
+            phase_emitter.note_wake()
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🧽 follow-up cut-off → input_audio_buffer.clear (drop partial utterance)")
             except Exception as e:
                 logger.debug(f"🧽 mic-flush input clear no-op ({e!r})")
 
+        async def _on_device_wake():
+            # va_client sends {"type":"wake"} on every wake (start_session). Mark
+            # the turn boundary for the dangling-VAD guard (A): until the user
+            # actually speaks, a server-VAD end-of-turn is a stale pre-wake
+            # segment closing late → suppress its thinking + cancel its garbage
+            # response (handled in PhaseEmitter via the kill-window callbacks).
+            phase_emitter.note_wake()
+
+        # Wire the dangling-VAD guard's kill-window into the PhaseEmitter. It
+        # reuses the SAME _interrupt_kill_until + _kill_racing_response machinery
+        # as the device stop: on a dangling stop, arm it so the auto-created
+        # garbage response is cancelled; on a real UserStartedSpeaking, clear it
+        # so a genuine new turn's response is never cancelled.
+        phase_emitter.set_kill_window_handlers(
+            on_dangling=lambda: _interrupt_kill_until.__setitem__(
+                "t", time.monotonic() + INTERRUPT_KILL_WINDOW_S),
+            on_real_speech=lambda: _interrupt_kill_until.__setitem__("t", 0.0),
+        )
+
         if self._serializer is not None:
             self._serializer.set_interrupt_handler(_on_device_interrupt)
             self._serializer.set_session_start_handler(_on_device_session_start)
             self._serializer.set_mic_flush_handler(_on_device_mic_flush)
+            self._serializer.set_wake_handler(_on_device_wake)
 
         return pipeline, runner, task
     

@@ -2,6 +2,20 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.12 (dev channel)
+
+- **No more "answers out of nowhere" right after the wake word.** If you woke
+  the device and said nothing, a leftover speech segment from a previous turn
+  could close late and make the assistant reply to an empty turn. The device
+  now signals each wake; the add-on suppresses that stale turn and cancels its
+  answer. **Requires the matching firmware update** (new wake signal).
+- **No more "stuck thinking" or a garbled re-answer after a normal reply.** When
+  the speech detector split your sentence in two, the late half could flip the
+  device from "replying" back to "thinking" mid-answer — reopening the mic so the
+  reply leaked back in, freezing the light on "thinking" for ~15 s and sometimes
+  triggering a nonsense follow-up answer. A reply now stays "replying" through
+  such stale detections.
+
 ## 0.5.11 (dev channel)
 
 - **Fewer "talks right after the wake word without you saying anything"

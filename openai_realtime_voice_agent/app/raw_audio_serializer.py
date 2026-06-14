@@ -46,6 +46,10 @@ class RawAudioSerializer(FrameSerializer):
         # utterance from OpenAI's input buffer AT THE CUT-OFF (so no reactive
         # clear-on-wake is needed). Set by WebSocketHandler.build_pipeline.
         self._on_mic_flush = None
+        # Async callback for {"type":"wake"} — sent by va_client on every wake.
+        # Resets the dangling-VAD guard's "speech since wake" tracker. Set by
+        # WebSocketHandler.build_pipeline.
+        self._on_wake = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
@@ -58,6 +62,10 @@ class RawAudioSerializer(FrameSerializer):
     def set_mic_flush_handler(self, handler):
         """Register the async no-arg callback fired on a device 'flush'."""
         self._on_mic_flush = handler
+
+    def set_wake_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'wake'."""
+        self._on_wake = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -114,6 +122,17 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_mic_flush()
                     except Exception as e:
                         logger.warning(f"⚠️ device mic-flush handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "wake":
+                # Sent by va_client on every wake (start_session). Marks a fresh
+                # turn boundary for the dangling-VAD guard: until the user
+                # actually speaks, any server-VAD end-of-turn is a stale segment
+                # from the previous turn closing late (→ garbage response).
+                logger.info("👋 device wake received")
+                if self._on_wake is not None:
+                    try:
+                        await self._on_wake()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device wake handler failed: {e!r}")
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 

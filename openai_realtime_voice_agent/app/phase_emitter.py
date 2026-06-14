@@ -145,6 +145,33 @@ class PhaseEmitter(FrameProcessor):
         # that is still in flight must NOT re-emit `thinking` and re-stick the
         # device. Cleared on the next real activity (user/bot speech start).
         self._suppress_thinking = False
+        # Dangling-VAD guard (A). The device sends {"type":"wake"} on every wake;
+        # note_wake() resets this to False. A real UserStartedSpeaking sets it
+        # True. A UserStoppedSpeaking with this still False is a server-VAD
+        # segment from a PREVIOUS turn closing late (the reply gated the mic mid-
+        # utterance, so the VAD never saw the stop) — committing it auto-creates
+        # a garbage response to an empty turn. We then suppress the thinking and
+        # cancel that racing response via the kill-window callback. Defaults True
+        # so nothing is suppressed before the first wake signal (and so old
+        # firmware that doesn't send `wake` degrades to a no-op).
+        self._speech_since_wake = True
+        # Callbacks into the websocket_handler's kill-window (set after the
+        # _interrupt_kill_until dict exists). _on_dangling_stop arms it (cancel
+        # the dangling turn's racing response); _on_real_speech clears it (a
+        # genuine new utterance — never cancel ITS response).
+        self._on_dangling_stop = None
+        self._on_real_speech = None
+
+    def note_wake(self) -> None:
+        """Device woke (or a follow-up window closed without speech). Until the
+        next real UserStartedSpeaking, any UserStoppedSpeaking is a dangling
+        pre-wake VAD segment (see _speech_since_wake)."""
+        self._speech_since_wake = False
+
+    def set_kill_window_handlers(self, on_dangling=None, on_real_speech=None) -> None:
+        """Wire the dangling-VAD guard to the websocket_handler kill-window."""
+        self._on_dangling_stop = on_dangling
+        self._on_real_speech = on_real_speech
 
     async def force_idle(self, reason: str = "") -> None:
         """Declare the current turn dead and put the device in idle.
@@ -246,12 +273,34 @@ class PhaseEmitter(FrameProcessor):
 
         if isinstance(frame, UserStartedSpeakingFrame):
             self._suppress_thinking = False
+            # A: a genuine utterance has begun this turn → not a dangling VAD,
+            # and the kill-window must NOT cancel THIS turn's response.
+            self._speech_since_wake = True
+            if self._on_real_speech is not None:
+                self._on_real_speech()
             self._cancel_pending_idle()
             self._cancel_watchdog()
             await self._emit("listening")
         elif isinstance(frame, UserStoppedSpeakingFrame):
             self._cancel_pending_idle()
-            if self._suppress_thinking:
+            if self._current == "replying":
+                # C: the bot is already replying. With barge_in:false the mic is
+                # gated during a reply, so a user-speech-stop here can only be a
+                # stale VAD tail of the question that just got its reply (the VAD
+                # split the utterance and the second half closed late). Emitting
+                # `thinking` would overwrite `replying`, reopen the mic mid-reply
+                # (the TTS leaks in) and strand the LED in `thinking` until the
+                # 15 s watchdog. Keep replying.
+                logger.info("📞 'thinking' suppressed — bot is replying (stale VAD tail)")
+            elif not self._speech_since_wake:
+                # A: no real speech since the last wake/flush → this stop is a
+                # dangling pre-wake server-VAD segment closing late. Suppress the
+                # thinking AND cancel the garbage response the server auto-creates
+                # for the (empty) committed turn.
+                logger.info("📞 'thinking' suppressed + kill armed — dangling VAD (no speech since wake)")
+                if self._on_dangling_stop is not None:
+                    self._on_dangling_stop()
+            elif self._suppress_thinking:
                 # A VAD stop raced a turn-death force_idle — stay idle.
                 logger.info("📞 phase 'thinking' suppressed (turn already declared dead)")
             else:
