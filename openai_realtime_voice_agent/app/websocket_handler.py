@@ -20,7 +20,7 @@ from pipecat.services.openai.realtime import events as openai_rt_events
 from app.raw_audio_serializer import RawAudioSerializer
 from app.session_manager import SessionManager
 from app.audio_recording_service import AudioRecordingService
-from app.phase_emitter import PhaseEmitter, TURN_LIVENESS
+from app.phase_emitter import PhaseEmitter
 from app.transcript_logger import TranscriptLogger
 from app.debug_frame_logger import DebugFrameLogger
 
@@ -594,29 +594,31 @@ class WebSocketHandler:
         #      speech + VAD end-of-turn (> 2 s) before a response is created.
         _interrupt_kill_until = {"t": 0.0}
         INTERRUPT_KILL_WINDOW_S = 1.5
-        # A device "stop" that lands WHILE a tool is running (web_search,
-        # GetLiveContext, an HA command — anything wrapped by the liveness
-        # tracker, i.e. every tool) must also cancel the response that tool will
-        # produce AFTER it returns. That response is created on the tool result,
-        # which for a slow tool (web search ~2-4 s) appears OUTSIDE the 1.5 s
-        # kill-window, so the time-based window alone misses it: the answer was
-        # already stopped by the user but its phases still played out (device
-        # showed `replying` ~17 s with the audio suppressed — observed
-        # 2026-06-14 21:26). This flag, armed only when a tool is in flight at
-        # interrupt time, makes _kill_racing_response cancel that one post-tool
-        # response regardless of timing. Cleared when consumed or at the next
-        # turn boundary (real speech / wake), so it can never hit a real turn.
-        _kill_post_tool_response = {"v": False}
+        # A device "stop" must cancel the NEXT assistant response too, not only
+        # the one currently playing. After a stop, the only responses OpenAI can
+        # still produce before the user speaks again are unwanted:
+        #   - the cancelled reply's already-generated tail;
+        #   - a slow tool's answer (web search ~2-4 s) the user stopped mid-run,
+        #     created on the tool result OUTSIDE the 1.5 s time-window;
+        #   - most common: OpenAI's STT hearing the user's spoken "stop" as a
+        #     turn and the model REPLYING to it ("Okay, I'll stop"), which lands
+        #     ~1.8 s later — just outside 1.5 s (observed 2026-06-14 22:51: the
+        #     device flashed red but a fresh "I'll be quiet" reply played, so the
+        #     user had to say stop twice).
+        # The time-window alone misses the >1.5 s cases. This flag, armed on
+        # EVERY device interrupt, makes _kill_racing_response cancel that one
+        # next response regardless of timing. It is consumed when used and
+        # cleared at the next genuine turn boundary (real speech via
+        # on_real_speech, and {"type":"wake"}) — and a legitimate next turn needs
+        # the user to actually speak — so it can never cancel a real turn.
+        _kill_next_response = {"v": False}
 
         async def _on_device_interrupt():
             _interrupt_kill_until["t"] = time.monotonic() + INTERRUPT_KILL_WINDOW_S
-            if TURN_LIVENESS.in_flight > 0:
-                _kill_post_tool_response["v"] = True
-                logger.info(
-                    "🛑 device interrupt during a tool call (in_flight=%d) → "
-                    "will cancel the post-tool response too",
-                    TURN_LIVENESS.in_flight,
-                )
+            # Arm the next-response kill on EVERY stop (see the flag comment):
+            # the 1.5 s time-window alone misses responses that land later —
+            # OpenAI replying to the spoken "stop", or a slow tool's answer.
+            _kill_next_response["v"] = True
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🛑 device interrupt → input_audio_buffer.clear sent (drop in-flight user audio)")
@@ -639,20 +641,18 @@ class WebSocketHandler:
             if getattr(item, "role", None) != "assistant":
                 return
             within_window = time.monotonic() < _interrupt_kill_until["t"]
-            post_tool = _kill_post_tool_response["v"]
-            if not within_window and not post_tool:
+            kill_armed = _kill_next_response["v"]
+            if not within_window and not kill_armed:
                 return
-            # Consume the post-tool flag: this assistant item IS the answer of
-            # the tool call the user stopped. (A plain racing response with no
-            # tool in flight still cancels via `within_window`.)
-            _kill_post_tool_response["v"] = False
+            # Consume the flag: this assistant item is the unwanted response the
+            # user's stop pre-empted — a stop-acknowledgement ("Okay, I'll stop"),
+            # a stopped tool's answer, or the cancelled reply's tail.
+            _kill_next_response["v"] = False
             try:
                 await openai_service.send_client_event(openai_rt_events.ResponseCancelEvent())
                 logger.info(
-                    "🛑 response raced in right after a device interrupt (%s) "
-                    "→ response.cancel",
-                    "post-tool answer of a stopped tool call" if post_tool
-                    else "OpenAI heard the stop word as a turn",
+                    "🛑 response raced in right after a device interrupt → "
+                    "response.cancel (post-stop)"
                 )
             except Exception as e:
                 logger.info(f"🛑 post-interrupt racing-response cancel no-op ({e!r})")
@@ -694,7 +694,7 @@ class WebSocketHandler:
             phase_emitter.note_wake()
             # New turn boundary: drop any pending post-tool kill so it can't
             # leak onto this fresh turn's response.
-            _kill_post_tool_response["v"] = False
+            _kill_next_response["v"] = False
 
         # Wire the dangling-VAD guard's kill-window into the PhaseEmitter. It
         # reuses the SAME _interrupt_kill_until + _kill_racing_response machinery
@@ -705,7 +705,7 @@ class WebSocketHandler:
             # Real user speech = a genuine new turn — disarm BOTH the time
             # window and the post-tool flag so neither can cancel it.
             _interrupt_kill_until["t"] = 0.0
-            _kill_post_tool_response["v"] = False
+            _kill_next_response["v"] = False
 
         phase_emitter.set_kill_window_handlers(
             on_dangling=lambda: _interrupt_kill_until.__setitem__(

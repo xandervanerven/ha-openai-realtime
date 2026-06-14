@@ -2,6 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.5.15 (dev channel)
+
+- **Fixed: saying "stop" sometimes needed two tries.** When you said "stop"
+  during a reply, the device stopped it — but OpenAI had also heard the word
+  "stop" and answered it ("Okay, I'll stop"), and that fresh little reply
+  arrived just after the cancel window closed, so it played anyway and you had
+  to say "stop" again. The add-on now cancels that next reply after any stop
+  (until you actually speak again), so one "stop" is enough.
+
 ## 0.5.14 (dev channel)
 
 - **Fixed: saying "stop" during a web search no longer leaves the device
