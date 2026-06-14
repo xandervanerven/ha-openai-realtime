@@ -2,7 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
-## 0.5.12 (dev channel)
+## 0.5.13 (dev channel)
+
+- **Fixed: after rapid "stop" + wake testing, a reply (e.g. a web-search
+  answer) could come out silent.** A "stop" tells the device to mute incoming
+  audio until it next receives a "listening" signal; the add-on was skipping
+  that signal as "redundant" when its own view of the phase hadn't changed,
+  so the device stayed muted and dropped the reply. The "listening" signal is
+  now always sent. (Pairs with a firmware fix that also stops the light ring
+  from freezing on "replying" in that case.)
 
 - **No more "answers out of nowhere" right after the wake word.** If you woke
   the device and said nothing, a leftover speech segment from a previous turn

@@ -190,7 +190,18 @@ class PhaseEmitter(FrameProcessor):
         await self._emit("idle")
 
     async def _emit(self, value: str) -> None:
-        if value == self._current:
+        # "listening" is NEVER deduped. The device lifts its post-stop incoming-
+        # audio suppression ONLY on receiving a "listening" phase (firmware
+        # 14bff74). A stop can RE-SET that suppression after our last "listening"
+        # without us emitting a different phase in between, so _current=="listening"
+        # no longer reflects the device's suppress state — deduping the next real
+        # turn's "listening" then leaves the device muted and the reply is dropped
+        # (observed live 2026-06-14: rapid stop/wake testing → web-search answer
+        # silently suppressed). A redundant "listening" is idempotent on the
+        # device (re-lifts suppress, re-opens the mic gate; the barge-in cut-over
+        # is a no-op because the mic is gated during a reply so a real
+        # UserStartedSpeaking never coincides with queued TTS).
+        if value == self._current and value != "listening":
             return
         self._current = value
         logger.info(f"📞 phase -> {value}")  # TEMP instrumentation
