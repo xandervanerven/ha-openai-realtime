@@ -2,6 +2,12 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1 (dev channel)
+
+- Version sync after the stable **0.6.0** release. The dev channel contains the
+  same content plus the dev-only diagnostics (log_level / DebugFrameLogger).
+  No functional changes.
+
 ## 0.5.15 (dev channel)
 
 - **Fixed: saying "stop" sometimes needed two tries.** When you said "stop"
