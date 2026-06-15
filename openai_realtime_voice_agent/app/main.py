@@ -11,6 +11,7 @@ from pipecat.pipeline.task import PipelineTask
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transports.websocket.server import WebsocketServerTransport
 from app.mcp_service import HomeAssistantMCPService
+from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
 from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
 from app.audio_recording_service import AudioRecordingService
@@ -149,6 +150,64 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
             )
             return True
         return False
+
+    def register_function(self, function_name, handler, start_callback=None, *,
+                          cancel_on_interruption: bool = True):  # type: ignore[override]
+        """Force cancel_on_interruption=False for every tool registration.
+
+        pipecat cancels in-flight function-call tasks on EVERY user-speech
+        interruption — and semantic_vad fires one per utterance fragment, so
+        merely continuing your own sentence kills the tool call your previous
+        fragment started. By then the HTTP request to Home Assistant has
+        usually already been SENT: the action executes, but its result never
+        reaches the model, which then tells the user it failed (observed
+        live: the lights turned ON while the assistant claimed they
+        wouldn't). Our tools are all short-lived (HA service calls, one web
+        search), so letting them finish and report the truth always beats
+        killing them halfway. This single override covers every registration
+        path (MCP tools via pipecat's MCPClient, web_search, disconnect).
+
+        The handler is also wrapped to tick TURN_LIVENESS around its run, so
+        the PhaseEmitter's thinking-watchdog knows a tool is in flight and a
+        slow tool (web search: 10-20 s of pipeline silence) is never mistaken
+        for a dead turn. All our handlers use the single-param
+        FunctionCallParams signature, so the wrapper does too (pipecat
+        inspects the signature to pick the calling convention).
+        """
+        async def liveness_tracked(params):
+            TURN_LIVENESS.tool_started()
+            try:
+                return await handler(params)
+            finally:
+                TURN_LIVENESS.tool_finished()
+
+        super().register_function(
+            function_name, liveness_tracked, start_callback, cancel_on_interruption=False
+        )
+
+    async def _receive_task_handler(self):  # type: ignore[override]
+        """Surface OpenAI reader death as an ErrorFrame so recovery can act.
+
+        pipecat's receive loop can end without producing ANY ErrorFrame: a
+        silent server-side close ends the `async for` normally, and a network
+        drop raises ConnectionClosed, which the task manager merely LOGS
+        ("unexpected exception"). Nothing reaches ConnectionRecovery either
+        way, so the session sat deaf for HOURS until the next user utterance
+        hit the dead socket — losing that utterance (observed live twice).
+        Wrap the loop and report its end; ConnectionRecovery treats the
+        message as a reconnect trigger.
+        """
+        try:
+            await super()._receive_task_handler()
+        except asyncio.CancelledError:
+            raise  # our own disconnect/reset tearing the task down — not a death
+        except Exception as e:
+            await self.push_error(error_msg=f"realtime receive loop died: {e!r}")
+            return
+        # Loop ended without an exception: a clean server-side close, or the
+        # fatal-error path (which already pushed its own ErrorFrame —
+        # duplicates collapse in ConnectionRecovery's cooldown/guard).
+        await self.push_error(error_msg="realtime receive loop ended — connection closed")
 
 
 class Application:
@@ -293,10 +352,19 @@ class Application:
         # hardware tail so the mic doesn't catch the reply's own end. Sent to the
         # device in `hello`; lower = snappier, higher = safer against echo.
         try:
-            follow_up_open_delay_ms = int(os.environ.get("FOLLOW_UP_OPEN_DELAY_MS", "200"))
+            follow_up_open_delay_ms = int(os.environ.get("FOLLOW_UP_OPEN_DELAY_MS", "700"))
         except (TypeError, ValueError):
-            follow_up_open_delay_ms = 200
+            follow_up_open_delay_ms = 700
         follow_up_open_delay_ms = max(0, min(5000, follow_up_open_delay_ms))
+        # Same idea at the WAKE boundary: delay (ms) after the wake chime before
+        # the mic opens, so the chime's own hardware tail doesn't leak into the
+        # fresh mic and become a ghost turn (the wake-path twin of
+        # follow_up_open_delay_ms — the yaml wake handler reads it via a lambda).
+        try:
+            wake_open_delay_ms = int(os.environ.get("WAKE_OPEN_DELAY_MS", "700"))
+        except (TypeError, ValueError):
+            wake_open_delay_ms = 700
+        wake_open_delay_ms = max(0, min(5000, wake_open_delay_ms))
         # Playback jitter buffer (ms): the device holds incoming TTS until this
         # much has accumulated before playing, so a brief network hiccup doesn't
         # dry out the speaker chain mid-word (audible crackle). Sent in `hello`.
@@ -352,12 +420,14 @@ class Application:
             audio_recording_service=self.audio_recording_service,
             follow_up_ms=follow_up_ms,
             follow_up_open_delay_ms=follow_up_open_delay_ms,
+            wake_open_delay_ms=wake_open_delay_ms,
             playback_prebuffer_ms=playback_prebuffer_ms,
         )
         logger.info(
             f"🔁 Follow-up window: {follow_up_listen_seconds}s "
             f"({'enabled' if follow_up_ms > 0 else 'disabled — turn-based'}), "
             f"mic-open delay {follow_up_open_delay_ms}ms, "
+            f"wake-open delay {wake_open_delay_ms}ms, "
             f"playback prebuffer {playback_prebuffer_ms}ms"
         )
         self.websocket_transport = self.websocket_handler.create_transport()

@@ -64,6 +64,15 @@ Voice PE (ESP32-S3)  ──WS, 16 kHz PCM up──▶   this add-on    ──▶
 The device does wake-word detection and XMOS audio cleanup locally and is a thin
 client. Interrupt a reply with the **"stop"** word or the center button.
 
+## Known limitations
+
+- **No voice timers or alarms yet** — every other Assist action (lights, switches,
+  scenes, climate) and online questions work.
+- **A brief reconnect about once an hour** (OpenAI's 60-minute session cap; the
+  add-on refreshes proactively during a quiet moment, so it rarely interrupts).
+- **Rarely, the assistant may stop itself** on a word in its own reply that sounds
+  like "stop" — just ask again.
+
 ## Credits
 
 - Forked from **[fjfricke/ha-openai-realtime](https://github.com/fjfricke/ha-openai-realtime)**.

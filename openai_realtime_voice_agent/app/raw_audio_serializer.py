@@ -32,10 +32,40 @@ class RawAudioSerializer(FrameSerializer):
         # InterruptionFrame (StartInterruptionFrame) on every user-start-speaking,
         # so reacting to that class would cancel the response on ANY speech.
         self._on_interrupt = None
+        # Async callback invoked when the device sends {"type":"start"}. NB the
+        # va_client sends this once per WebSocket CONNECTION (on connect), NOT
+        # per wake-word session. Used to start every (re)connection with a
+        # clean OpenAI input buffer — a reconnect mid-utterance leaves half an
+        # utterance behind, which session reuse would replay ahead of the next
+        # turn. The per-WAKE stale-buffer case (follow-up window cutting a
+        # sentence; observed live 2026-06-12) is covered separately by
+        # ConnectionRecovery's mic-resume gap detector in websocket_handler.py.
+        self._on_session_start = None
+        # Async callback for {"type":"flush"} — the device sends this when a
+        # follow-up window times out mid-stream, to drop any uncommitted partial
+        # utterance from OpenAI's input buffer AT THE CUT-OFF (so no reactive
+        # clear-on-wake is needed). Set by WebSocketHandler.build_pipeline.
+        self._on_mic_flush = None
+        # Async callback for {"type":"wake"} — sent by va_client on every wake.
+        # Resets the dangling-VAD guard's "speech since wake" tracker. Set by
+        # WebSocketHandler.build_pipeline.
+        self._on_wake = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
         self._on_interrupt = handler
+
+    def set_session_start_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'start'."""
+        self._on_session_start = handler
+
+    def set_mic_flush_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'flush'."""
+        self._on_mic_flush = handler
+
+    def set_wake_handler(self, handler):
+        """Register the async no-arg callback fired on a device 'wake'."""
+        self._on_wake = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -72,6 +102,37 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_interrupt()
                     except Exception as e:
                         logger.warning(f"⚠️ device interrupt handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "start":
+                # Sent by va_client once per WS connection (on connect). Mic
+                # audio only flows after a wake, so clearing the stale OpenAI
+                # input buffer here cannot eat new speech.
+                logger.info("🎬 device connection start received")
+                if self._on_session_start is not None:
+                    try:
+                        await self._on_session_start()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device session-start handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "flush":
+                # A follow-up window timed out mid-stream: drop any uncommitted
+                # partial utterance at the cut-off so a later wake can't complete
+                # it into a stale answer.
+                logger.info("🧽 device mic flush received")
+                if self._on_mic_flush is not None:
+                    try:
+                        await self._on_mic_flush()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device mic-flush handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") == "wake":
+                # Sent by va_client on every wake (start_session). Marks a fresh
+                # turn boundary for the dangling-VAD guard: until the user
+                # actually speaks, any server-VAD end-of-turn is a stale segment
+                # from the previous turn closing late (→ garbage response).
+                logger.info("👋 device wake received")
+                if self._on_wake is not None:
+                    try:
+                        await self._on_wake()
+                    except Exception as e:
+                        logger.warning(f"⚠️ device wake handler failed: {e!r}")
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 

@@ -2,6 +2,52 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.0
+
+> ⚠️ **This update has two parts — please update both:**
+> 1. **This add-on** (the update you're installing now).
+> 2. **The Voice PE firmware** — open **ESPHome Device Builder** and click **Update** (or **Install**) on your device.
+>
+> The device and the add-on use one shared protocol; updating only one half can cause odd behaviour.
+
+A reliability and voice-control polish release.
+
+**Stop word**
+
+- **Saying "stop" now usually works on the first try.** The spoken "stop" could
+  previously be answered by the assistant a moment later, so you sometimes had to
+  repeat it; that follow-on reply is now cancelled, so a single "stop" is
+  typically enough.
+- **Saying "stop" during a web search returns the device to rest promptly** — the
+  light ring no longer keeps showing the "replying" animation for several seconds.
+- **Fewer accidental stops** on the assistant's own speech.
+- The light ring briefly flashes **red** to confirm your "stop" was registered. *(firmware)*
+
+**Reliability**
+
+- **No more unresponsive sessions.** A silently dropped connection to OpenAI is
+  now detected and repaired within seconds, instead of leaving the assistant deaf
+  until a restart.
+- **The roughly hourly reconnect now happens proactively during a quiet moment**,
+  so it practically never interrupts a conversation.
+- **Smart-home commands are no longer cancelled** if you keep talking while they run.
+- The light can no longer get **stuck on "thinking"**, and long web searches get
+  all the time they need.
+
+**No more "answers out of nowhere"**
+
+- The assistant no longer occasionally replies — or repeats its previous answer —
+  right after the wake word when you said nothing.
+- A sentence that got cut off is no longer answered minutes later on your next wake.
+
+**Settings**
+
+- New **"Wake mic delay"** setting: a short pause after the wake chime before the
+  mic opens, so the chime can't be mistaken for speech (default 700 ms).
+- The **"Follow-up mic delay"** default is now **700 ms**. Existing installs keep
+  their saved value — raise yours if the assistant ever answers right after its
+  own reply.
+
 ## 0.5.0
 
 A big stable release: everything built and tested on the dev channel over the

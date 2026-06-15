@@ -73,7 +73,8 @@ option has plain-language inline help.
 | `transcription_language` | *(blank)* | set your ISO code (e.g. `nl`): locks the language + logs the user transcript |
 | `instructions` | *(English default)* | the system prompt; swap the LANGUAGE line for your language |
 | `follow_up_listen_seconds` | `8` | mic stays open this long so you can answer back |
-| `follow_up_open_delay_ms` | `200` | echo guard before the follow-up mic opens; 0 = snappiest |
+| `follow_up_open_delay_ms` | `700` | echo guard before the follow-up mic opens; lower = snappier but risks ghost turns |
+| `wake_open_delay_ms` | `700` | the same echo guard right after the wake chime; lower = snappier wake but risks a ghost turn |
 | `vad_eagerness` | `low` | waits longest before deciding you're done talking |
 | `playback_prebuffer_ms` | `150` | raise to ~250 if you hear crackle; 0 = play immediately |
 | `max_context_messages` | `12` | bounds per-turn token cost |
@@ -108,10 +109,12 @@ Every option has a description on the **Configuration** tab. The ones worth know
 - **`transcription_language`** turns the side-channel transcript on. With it set you
   get `🗣️ user: …` lines in the add-on log (handy for debugging); it does **not**
   change what the model understands — the main model hears your audio natively.
-- **`follow_up_open_delay_ms` / `playback_prebuffer_ms`** default to `200` / `150`
-  — a small echo guard and jitter cushion. Set them to `0` for the snappiest
-  feel; raise them if the device "answers nobody" after a reply (open delay) or
-  you hear crackle at the start of replies (prebuffer).
+- **`follow_up_open_delay_ms` / `playback_prebuffer_ms`** default to `700` / `150`
+  — an echo guard and jitter cushion. Lowering them makes the device feel
+  snappier, but below ~700 ms open delay the reply's own speaker tail can leak
+  into the fresh follow-up mic and become a ghost turn (the assistant "answers
+  nobody" or repeats itself); raise the prebuffer if you hear crackle at the
+  start of replies.
 
 ## 7. Reading the logs
 
@@ -119,6 +122,22 @@ The add-on log shows each turn: `🗣️ user:` (when transcription language is 
 `🤖 assistant:` (the reply text), `📞 phase ->` (device state), tool calls, and
 `🔌 …reconnecting` / `✅ reconnected` on a connection recovery. View it on the add-on
 **Log** tab.
+
+## Known limitations
+
+- **No voice timers or alarms yet.** Setting a timer by voice isn't supported (the
+  official Home Assistant timer intent isn't wired up). Everything else — lights,
+  switches, scenes, climate, and questions — works.
+- **A brief reconnect about once an hour.** OpenAI limits a realtime session to
+  60 minutes. The add-on refreshes proactively during a quiet moment, so you'll
+  rarely notice it, but a reconnect can occasionally cause a ~1–2 second pause.
+- **Rarely, the assistant may stop itself** on a word in its own reply that sounds
+  like "stop" — just ask again.
+
+**Using "stop":** say "stop" (or press the center button) to interrupt the assistant
+*while it's speaking* — during a reply, or during the short listening window right
+after one. It has no effect before the assistant has started answering (there's
+nothing to stop yet).
 
 ## Firmware (Home Assistant Voice PE only)
 
