@@ -455,6 +455,23 @@ class WebSocketHandler:
         if self.session_manager:
             context_aggregator = self.session_manager.create_context_aggregator(client_id)
             context_initializer = self.session_manager.create_context_initializer(client_id, context_aggregator)
+            if not hasattr(openai_service, "send_client_event"):
+                # Gemini REQUIRES a context object for function calls: without
+                # one, tool results can't be reported back and Gemini kills the
+                # socket with 1007 "invalid argument" (observed live — tools ran
+                # but every turn died silently). Nothing in this audio-only
+                # pipeline pushes an LLMContextFrame, so seed the aggregator's
+                # context into the service here. set_context() is pre-connection
+                # safe (defers via _run_llm_when_session_ready) and also replays
+                # restored history to the server on connect with
+                # turn_complete=False — replacing ContextInitializer, whose
+                # LLMMessagesUpdateFrame the Gemini service doesn't process.
+                try:
+                    asyncio.create_task(openai_service.set_context(context_aggregator.user().context))
+                    context_initializer = None
+                    logger.info("🌱 Seeded Gemini context from session aggregator (tool calls + history restore)")
+                except Exception as e:
+                    logger.warning(f"⚠️ could not seed Gemini context: {e!r}")
         
         # Build pipeline components. InputResampler runs FIRST (right after the
         # transport) so every later stage — VAD, context aggregator, OpenAI
