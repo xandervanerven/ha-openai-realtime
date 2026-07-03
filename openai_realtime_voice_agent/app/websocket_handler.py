@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Optional, Callable, Awaitable, Dict
@@ -375,6 +376,9 @@ class WebSocketHandler:
         self.pipeline: Optional[Pipeline] = None
         self.runner: Optional[PipelineRunner] = None
         self.current_task: Optional[PipelineTask] = None
+        # Chime-gated follow-up (see request_follow_up_chime). Env-toggleable.
+        self._followup_chime_enabled = os.environ.get("FOLLOW_UP_CHIME", "true").strip().lower() == "true"
+        self._suppress_followup_chime = False
         # The serializer instance the transport reads through. Kept so
         # build_pipeline can wire its device-interrupt callback to the OpenAI
         # service.
@@ -481,7 +485,8 @@ class WebSocketHandler:
         # idle through PhaseEmitter.force_idle() (consistent phase state +
         # racing-`thinking` suppression); it is APPENDED near the end of the
         # pipeline below, before transport.output().
-        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase)
+        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase,
+                                     on_natural_idle=self.request_follow_up_chime)
 
         pipeline_components = [
             transport.input(),
@@ -638,6 +643,9 @@ class WebSocketHandler:
         _is_openai = hasattr(openai_service, "send_client_event")
 
         async def _on_device_interrupt():
+            # The user asked for silence — don't chime a follow-up window at
+            # this turn's (delayed) idle. One-shot; also cleared on next wake.
+            self._suppress_followup_chime = True
             _interrupt_kill_until["t"] = time.monotonic() + INTERRUPT_KILL_WINDOW_S
             # Arm the next-response kill on EVERY stop (see the flag comment):
             # the 1.5 s time-window alone misses responses that land later —
@@ -742,6 +750,8 @@ class WebSocketHandler:
             # New turn boundary: drop any pending post-tool kill so it can't
             # leak onto this fresh turn's response.
             _kill_next_response["v"] = False
+            # Fresh turn — this reply's natural end should chime again.
+            self._suppress_followup_chime = False
 
         # Wire the dangling-VAD guard's kill-window into the PhaseEmitter. It
         # reuses the SAME _interrupt_kill_until + _kill_racing_response machinery
@@ -810,6 +820,26 @@ class WebSocketHandler:
         """Send a JSON object to every connected device as a TEXT frame."""
         for ws in list(self._websockets):
             await self._send_json(ws, obj)
+
+    async def request_follow_up_chime(self) -> None:
+        """Open the device's CHIME-GATED follow-up window after a natural reply end.
+
+        Sends {"type":"request_follow_up"}: va_client waits for the speaker to
+        drain, the yaml plays the wake chime, waits out its echo tail (800 ms),
+        THEN opens the mic — so the chime is an honest "you can speak now" cue.
+        This replaces the silent natural window (follow_up_ms=0 in compose),
+        whose unannounced mic-open users kept talking into too early.
+        One-shot suppressed after a device "stop": the user asked for silence,
+        not another listening window.
+        """
+        if not self._followup_chime_enabled:
+            return
+        if self._suppress_followup_chime:
+            self._suppress_followup_chime = False
+            logger.info("🔕 follow-up chime suppressed (turn was interrupted)")
+            return
+        logger.info(f"🔔 natural reply end → request_follow_up to {len(self._websockets)} device(s)")
+        await self.broadcast_json({"type": "request_follow_up"})
 
     async def broadcast_phase(self, value: str) -> None:
         """Send a va_client phase message to every connected device."""

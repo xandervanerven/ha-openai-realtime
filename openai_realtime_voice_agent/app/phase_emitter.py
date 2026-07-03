@@ -119,7 +119,7 @@ class PhaseEmitter(FrameProcessor):
     # How often to log that we're deliberately waiting on a running tool.
     INFLIGHT_LOG_EVERY_S = 30.0
 
-    def __init__(self, send_phase, idle_debounce_s: float = None, **kwargs):
+    def __init__(self, send_phase, idle_debounce_s: float = None, on_natural_idle=None, **kwargs):
         """
         Args:
             send_phase: async callable(value: str) that delivers the phase to
@@ -138,6 +138,10 @@ class PhaseEmitter(FrameProcessor):
             except (TypeError, ValueError):
                 idle_debounce_s = 1.5
         self._idle_debounce_s = max(0.0, idle_debounce_s)
+        # Fired ONLY on the natural end-of-reply idle (the debounce path) —
+        # never on force_idle (stop/error paths). Used to trigger the device's
+        # chime-gated follow-up window (request_follow_up).
+        self._on_natural_idle = on_natural_idle
         self._idle_task = None
         self._watchdog_task = None
         self._current = None  # last phase actually sent, to dedupe redundant emits
@@ -244,6 +248,11 @@ class PhaseEmitter(FrameProcessor):
             self._arm_watchdog()
             return
         await self._emit("idle")
+        if self._on_natural_idle is not None:
+            try:
+                await self._on_natural_idle()
+            except Exception as e:
+                logger.warning(f"⚠️ on_natural_idle callback failed: {e!r}")
 
     async def _thinking_watchdog(self) -> None:
         """Force idle when `thinking` sits with no model activity (dead turn)."""
