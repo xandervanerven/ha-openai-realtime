@@ -33,7 +33,19 @@ logger = logging.getLogger(__name__)
 # Literal[24000]) — you cannot tell it the audio is 16 kHz. So the device's
 # 16 kHz frames would be read 1.5x too fast / pitched up, garbling the whole
 # transcript. The InputResampler below upsamples 16k->24k in the pipeline.
+#
+# Gemini Live is different: its NATIVE input rate is 16 kHz and the service
+# declares each frame's real rate in the mime type (audio/pcm;rate=N). So on
+# the gemini path the device audio goes up unmodified — the InputResampler
+# becomes a pass-through (out_rate == frame rate) and upstream bandwidth drops
+# 1.5x. Output is 24 kHz on both providers, matching the device speaker.
 PIPELINE_SAMPLE_RATE = 24000
+DEVICE_INPUT_SAMPLE_RATE = 16000
+
+
+def _pipeline_input_rate() -> int:
+    provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+    return DEVICE_INPUT_SAMPLE_RATE if provider == "gemini" else PIPELINE_SAMPLE_RATE
 
 
 class SessionActivityTracker(FrameProcessor):
@@ -411,7 +423,7 @@ class WebSocketHandler:
                 serializer=serializer,
                 audio_in_enabled=True,
                 audio_out_enabled=True,
-                audio_in_sample_rate=PIPELINE_SAMPLE_RATE,
+                audio_in_sample_rate=_pipeline_input_rate(),
                 audio_out_sample_rate=PIPELINE_SAMPLE_RATE,
             )
         )
@@ -498,7 +510,7 @@ class WebSocketHandler:
                                # Gemini reconnects internally (session resumption);
                                # only OpenAI needs the in-place reset machinery.
                                enable_reconnect=hasattr(openai_service, "send_client_event")),
-            InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
+            InputResampler(out_rate=_pipeline_input_rate()),
             input_activity_tracker,
         ]
         

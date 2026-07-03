@@ -12,9 +12,13 @@ are about OUR app, not about the provider:
     HA service call has usually already been SENT; killing the task only loses
     the truthful result), and tick TURN_LIVENESS so the PhaseEmitter's
     thinking-watchdog knows a slow tool is alive.
+  - _connection_task_handler: adds the GoAway handling pipecat 0.0.97 lacks
+    (graceful reconnect on Google's pre-termination notice, instead of letting
+    the socket die and reconnecting through the error path).
 """
 import logging
 import os
+import time
 
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.google.gemini_live.llm import (
@@ -50,6 +54,70 @@ class SafeGeminiLiveLLMService(GeminiLiveLLMService):
             logger.info(f"🔁 idle-session drop ({error}) — reconnecting, not counted toward fatal")
             return True
         return await super()._handle_connection_error(error)
+
+    async def _connection_task_handler(self, config):  # type: ignore[override]
+        """Copy of the pinned-0.0.97 receive loop + GoAway handling.
+
+        Google sends a GoAway message (with time_left) before terminating a
+        connection; the base loop's if/elif chain silently drops it, so the
+        socket later dies hard (ws 1008) and recovery runs through the ERROR
+        path. Here GoAway instead triggers a graceful in-place reconnect — at
+        once when the session is quiet, else at the next turn boundary — using
+        the same _reconnect()+return pattern (and the retained session
+        resumption handle) as the error path, without touching the failure
+        counter. If a mid-turn GoAway kills the socket before the turn ends,
+        the error path still catches it exactly as before.
+        """
+        async with self._client.aio.live.connect(model=self._model_name, config=config) as session:
+            logger.info("Connected to Gemini service")
+            self._connection_start_time = time.time()
+            await self._handle_session_ready(session)
+
+            goaway_pending = False
+            while True:
+                try:
+                    turn = self._session.receive()
+                    async for message in turn:
+                        self._check_and_reset_failure_counter()
+
+                        if getattr(message, "go_away", None):
+                            goaway_pending = True
+                            time_left = getattr(message.go_away, "time_left", None)
+                            logger.info(f"👋 GoAway from server (time_left={time_left}) — "
+                                        "will reconnect gracefully at the next quiet moment")
+                        elif message.server_content and message.server_content.model_turn:
+                            await self._handle_msg_model_turn(message)
+                        elif (
+                            message.server_content
+                            and message.server_content.turn_complete
+                            and message.usage_metadata
+                        ):
+                            await self._handle_msg_turn_complete(message)
+                            await self._handle_msg_usage_metadata(message)
+                        elif message.server_content and message.server_content.input_transcription:
+                            await self._handle_msg_input_transcription(message)
+                        elif message.server_content and message.server_content.output_transcription:
+                            await self._handle_msg_output_transcription(message)
+                        elif message.server_content and message.server_content.grounding_metadata:
+                            await self._handle_msg_grounding_metadata(message)
+                        elif message.tool_call:
+                            await self._handle_msg_tool_call(message)
+                        elif message.session_resumption_update:
+                            self._handle_msg_resumption_update(message)
+
+                        if goaway_pending and not self._bot_is_responding and not self._user_is_speaking:
+                            break  # quiet moment mid-stream — reconnect below
+                    if goaway_pending and not self._bot_is_responding and not self._user_is_speaking:
+                        logger.info("🔁 graceful reconnect after GoAway (session resumption keeps context)")
+                        await self._reconnect()
+                        return
+                except Exception as e:
+                    if not self._disconnecting:
+                        should_reconnect = await self._handle_connection_error(e)
+                        if should_reconnect:
+                            await self._reconnect()
+                            return
+                    break
 
     def register_function(self, function_name, handler, start_callback=None, *,
                           cancel_on_interruption: bool = True):  # type: ignore[override]
