@@ -554,6 +554,10 @@ class WebSocketHandler:
         # Disable idle timeout - server should always stay ready for connections
         runner = PipelineRunner()
         task = PipelineTask(pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False)
+        # Keep a handle for out-of-band frame injection (the Gemini device
+        # interrupt queues a BotInterruptionFrame on it). One pipeline is live
+        # at a time (per-connection rebuild), so latest wins.
+        self.current_task = task
         
         # Start pipeline in background
         asyncio.create_task(runner.run(task))
