@@ -33,6 +33,24 @@ logger = logging.getLogger(__name__)
 class SafeGeminiLiveLLMService(GeminiLiveLLMService):
     """GeminiLiveLLMService with app-level tool-call semantics (see module doc)."""
 
+    async def _handle_connection_error(self, error: Exception) -> bool:  # type: ignore[override]
+        """Don't let routine idle-session drops accumulate into a fatal death.
+
+        Google aborts quiet Live sessions every ~2.5 min (ws close 1008 "The
+        operation was aborted"); the built-in reconnect restores them with the
+        session-resumption handle. But pipecat's consecutive-failure counter
+        only resets on session ACTIVITY, which an idle session never generates
+        — so the third quiet abort marks the service fatally dead (observed
+        live 2026-07-03: dead after ~7.5 min of silence). An abort while
+        nothing is in flight is routine cycling, not degradation: reconnect
+        without counting it. Mid-turn failures still count toward fatal.
+        """
+        if not getattr(self, "_bot_is_responding", False) and not getattr(self, "_user_is_speaking", False):
+            self._consecutive_failures = 0
+            logger.info(f"🔁 idle-session drop ({error}) — reconnecting, not counted toward fatal")
+            return True
+        return await super()._handle_connection_error(error)
+
     def register_function(self, function_name, handler, start_callback=None, *,
                           cancel_on_interruption: bool = True):  # type: ignore[override]
         async def liveness_tracked(params):
