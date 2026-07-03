@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Optional, Callable, Awaitable, Dict
@@ -13,7 +14,7 @@ from pipecat.transports.websocket.server import WebsocketServerTransport, Websoc
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, ErrorFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, ErrorFrame, BotInterruptionFrame
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.services.openai.realtime import events as openai_rt_events
 
@@ -32,7 +33,19 @@ logger = logging.getLogger(__name__)
 # Literal[24000]) — you cannot tell it the audio is 16 kHz. So the device's
 # 16 kHz frames would be read 1.5x too fast / pitched up, garbling the whole
 # transcript. The InputResampler below upsamples 16k->24k in the pipeline.
+#
+# Gemini Live is different: its NATIVE input rate is 16 kHz and the service
+# declares each frame's real rate in the mime type (audio/pcm;rate=N). So on
+# the gemini path the device audio goes up unmodified — the InputResampler
+# becomes a pass-through (out_rate == frame rate) and upstream bandwidth drops
+# 1.5x. Output is 24 kHz on both providers, matching the device speaker.
 PIPELINE_SAMPLE_RATE = 24000
+DEVICE_INPUT_SAMPLE_RATE = 16000
+
+
+def _pipeline_input_rate() -> int:
+    provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+    return DEVICE_INPUT_SAMPLE_RATE if provider == "gemini" else PIPELINE_SAMPLE_RATE
 
 
 class SessionActivityTracker(FrameProcessor):
@@ -169,9 +182,14 @@ class ConnectionRecovery(FrameProcessor):
     REFRESH_QUIET_S = 60.0    # ... and no mic audio flowed for this long
     REFRESH_CHECK_S = 60.0    # poll cadence of the background check
 
-    def __init__(self, openai_service, emit_idle=None, phase_emitter=None, **kwargs):
+    def __init__(self, openai_service, emit_idle=None, phase_emitter=None,
+                 enable_reconnect: bool = True, **kwargs):
         super().__init__(**kwargs)
         self._service = openai_service
+        # Gemini mode: the GeminiLiveLLMService reconnects internally (with
+        # session resumption) and has no reset_conversation(); only the
+        # provider-neutral idle-unstick path below stays active.
+        self._enable_reconnect = enable_reconnect
         self._emit_idle = emit_idle  # async callable(value:str), e.g. broadcast_phase
         # Preferred idle route: PhaseEmitter.force_idle() keeps the emitter's
         # phase state consistent AND suppresses the racing `thinking` from VAD
@@ -195,7 +213,7 @@ class ConnectionRecovery(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if self._refresh_task is None:
+        if self._refresh_task is None and self._enable_reconnect:
             self._refresh_task = asyncio.create_task(self._proactive_refresh_loop())
         if isinstance(frame, InputAudioRawFrame):
             # Only kept for the proactive-refresh "is anyone interacting?" check.
@@ -223,7 +241,7 @@ class ConnectionRecovery(FrameProcessor):
             #     reports them with this message. Without it the session sat
             #     deaf for hours until the next utterance hit the dead socket.
             reader_dead = "realtime receive loop" in msg
-            if send_flood or session_dead or reader_dead:
+            if (send_flood or session_dead or reader_dead) and self._enable_reconnect:
                 now = time.monotonic()
                 if now - self._last_attempt >= self.RECONNECT_COOLDOWN_S:
                     self._reconnecting = True
@@ -370,6 +388,9 @@ class WebSocketHandler:
         self.pipeline: Optional[Pipeline] = None
         self.runner: Optional[PipelineRunner] = None
         self.current_task: Optional[PipelineTask] = None
+        # Chime-gated follow-up (see request_follow_up_chime). Env-toggleable.
+        self._followup_chime_enabled = os.environ.get("FOLLOW_UP_CHIME", "true").strip().lower() == "true"
+        self._suppress_followup_chime = False
         # The serializer instance the transport reads through. Kept so
         # build_pipeline can wire its device-interrupt callback to the OpenAI
         # service.
@@ -402,7 +423,7 @@ class WebSocketHandler:
                 serializer=serializer,
                 audio_in_enabled=True,
                 audio_out_enabled=True,
-                audio_in_sample_rate=PIPELINE_SAMPLE_RATE,
+                audio_in_sample_rate=_pipeline_input_rate(),
                 audio_out_sample_rate=PIPELINE_SAMPLE_RATE,
             )
         )
@@ -450,6 +471,23 @@ class WebSocketHandler:
         if self.session_manager:
             context_aggregator = self.session_manager.create_context_aggregator(client_id)
             context_initializer = self.session_manager.create_context_initializer(client_id, context_aggregator)
+            if not hasattr(openai_service, "send_client_event"):
+                # Gemini REQUIRES a context object for function calls: without
+                # one, tool results can't be reported back and Gemini kills the
+                # socket with 1007 "invalid argument" (observed live — tools ran
+                # but every turn died silently). Nothing in this audio-only
+                # pipeline pushes an LLMContextFrame, so seed the aggregator's
+                # context into the service here. set_context() is pre-connection
+                # safe (defers via _run_llm_when_session_ready) and also replays
+                # restored history to the server on connect with
+                # turn_complete=False — replacing ContextInitializer, whose
+                # LLMMessagesUpdateFrame the Gemini service doesn't process.
+                try:
+                    asyncio.create_task(openai_service.set_context(context_aggregator.user().context))
+                    context_initializer = None
+                    logger.info("🌱 Seeded Gemini context from session aggregator (tool calls + history restore)")
+                except Exception as e:
+                    logger.warning(f"⚠️ could not seed Gemini context: {e!r}")
         
         # Build pipeline components. InputResampler runs FIRST (right after the
         # transport) so every later stage — VAD, context aggregator, OpenAI
@@ -459,7 +497,8 @@ class WebSocketHandler:
         # idle through PhaseEmitter.force_idle() (consistent phase state +
         # racing-`thinking` suppression); it is APPENDED near the end of the
         # pipeline below, before transport.output().
-        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase)
+        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase,
+                                     on_natural_idle=self.request_follow_up_chime)
 
         pipeline_components = [
             transport.input(),
@@ -467,8 +506,11 @@ class WebSocketHandler:
             # to the task source, so place this upstream of the service) and
             # reconnect in place. Without it a 1011/1001 drop bricks the session.
             ConnectionRecovery(openai_service=openai_service, emit_idle=self.broadcast_phase,
-                               phase_emitter=phase_emitter),
-            InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
+                               phase_emitter=phase_emitter,
+                               # Gemini reconnects internally (session resumption);
+                               # only OpenAI needs the in-place reset machinery.
+                               enable_reconnect=hasattr(openai_service, "send_client_event")),
+            InputResampler(out_rate=_pipeline_input_rate()),
             input_activity_tracker,
         ]
         
@@ -529,6 +571,10 @@ class WebSocketHandler:
         # Disable idle timeout - server should always stay ready for connections
         runner = PipelineRunner()
         task = PipelineTask(pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False)
+        # Keep a handle for out-of-band frame injection (the Gemini device
+        # interrupt queues a BotInterruptionFrame on it). One pipeline is live
+        # at a time (per-connection rebuild), so latest wins.
+        self.current_task = task
         
         # Start pipeline in background
         asyncio.create_task(runner.run(task))
@@ -600,12 +646,31 @@ class WebSocketHandler:
         # the user to actually speak — so it can never cancel a real turn.
         _kill_next_response = {"v": False}
 
+        # Provider split: the OpenAI realtime service exposes raw client events
+        # (input_audio_buffer.clear / response.cancel); the Gemini Live service
+        # has neither concept — interruption is pipecat-native
+        # (BotInterruptionFrame → transport clears queued audio, service resets
+        # _bot_is_responding), and there is no client-held input buffer to
+        # clear (server VAD consumes the stream as it arrives).
+        _is_openai = hasattr(openai_service, "send_client_event")
+
         async def _on_device_interrupt():
+            # The user asked for silence — don't chime a follow-up window at
+            # this turn's (delayed) idle. One-shot; also cleared on next wake.
+            self._suppress_followup_chime = True
             _interrupt_kill_until["t"] = time.monotonic() + INTERRUPT_KILL_WINDOW_S
             # Arm the next-response kill on EVERY stop (see the flag comment):
             # the 1.5 s time-window alone misses responses that land later —
             # OpenAI replying to the spoken "stop", or a slow tool's answer.
             _kill_next_response["v"] = True
+            if not _is_openai:
+                try:
+                    if self.current_task is not None:
+                        await self.current_task.queue_frame(BotInterruptionFrame())
+                        logger.info("🛑 device interrupt → BotInterruptionFrame queued (gemini)")
+                except Exception as e:
+                    logger.info(f"🛑 device interrupt → interruption no-op ({e!r})")
+                return
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🛑 device interrupt → input_audio_buffer.clear sent (drop in-flight user audio)")
@@ -620,8 +685,17 @@ class WebSocketHandler:
             except Exception as e:
                 logger.info(f"🛑 device interrupt → response.cancel no-op ({e!r})")
 
-        @openai_service.event_handler("on_conversation_item_created")
-        async def _kill_racing_response(service, item_id, item):
+        if not _is_openai:
+            # Gemini: no conversation.item events exist. The racing-response
+            # cases this handler kills are OpenAI protocol races; on Gemini the
+            # BotInterruptionFrame path above already clears queued output, and
+            # the device silences itself. If testing shows Gemini replying to a
+            # spoken "stop", add an output-side gate here.
+            async def _kill_racing_response(service, item_id, item):  # pragma: no cover
+                return
+        else:
+          @openai_service.event_handler("on_conversation_item_created")
+          async def _kill_racing_response(service, item_id, item):
             # Pipecat fires this for every conversation.item.added; only an
             # ASSISTANT item right after a device interrupt is the racing
             # response to the stop word the user just cancelled.
@@ -651,6 +725,9 @@ class WebSocketHandler:
             # utterance in OpenAI's input buffer; start every (re)connection
             # with a clean one. The per-WAKE/follow-up stale-buffer case is
             # covered by the device's {"type":"flush"} on follow-up timeout.
+            if not _is_openai:
+                logger.info("🎬 device (re)connected (gemini: no client input buffer to clear)")
+                return
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🎬 device (re)connected → input_audio_buffer.clear (clean start)")
@@ -666,6 +743,9 @@ class WebSocketHandler:
             # Also a turn boundary for the dangling-VAD guard: the follow-up
             # closed without speech, so any later server-VAD stop is dangling.
             phase_emitter.note_wake()
+            if not _is_openai:
+                logger.info("🧽 follow-up cut-off (gemini: server VAD owns the input stream)")
+                return
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🧽 follow-up cut-off → input_audio_buffer.clear (drop partial utterance)")
@@ -682,6 +762,8 @@ class WebSocketHandler:
             # New turn boundary: drop any pending post-tool kill so it can't
             # leak onto this fresh turn's response.
             _kill_next_response["v"] = False
+            # Fresh turn — this reply's natural end should chime again.
+            self._suppress_followup_chime = False
 
         # Wire the dangling-VAD guard's kill-window into the PhaseEmitter. It
         # reuses the SAME _interrupt_kill_until + _kill_racing_response machinery
@@ -750,6 +832,34 @@ class WebSocketHandler:
         """Send a JSON object to every connected device as a TEXT frame."""
         for ws in list(self._websockets):
             await self._send_json(ws, obj)
+
+    def suppress_next_followup_chime(self) -> None:
+        """One-shot: skip the chime/mic-open at this turn's natural idle.
+
+        Called by the end_conversation tool (model detected closing intent)
+        and by the device-stop handler. Cleared on the next wake.
+        """
+        self._suppress_followup_chime = True
+
+    async def request_follow_up_chime(self) -> None:
+        """Open the device's CHIME-GATED follow-up window after a natural reply end.
+
+        Sends {"type":"request_follow_up"}: va_client waits for the speaker to
+        drain, the yaml plays the wake chime, waits out its echo tail (800 ms),
+        THEN opens the mic — so the chime is an honest "you can speak now" cue.
+        This replaces the silent natural window (follow_up_ms=0 in compose),
+        whose unannounced mic-open users kept talking into too early.
+        One-shot suppressed after a device "stop": the user asked for silence,
+        not another listening window.
+        """
+        if not self._followup_chime_enabled:
+            return
+        if self._suppress_followup_chime:
+            self._suppress_followup_chime = False
+            logger.info("🔕 follow-up chime suppressed (turn was interrupted)")
+            return
+        logger.info(f"🔔 natural reply end → request_follow_up to {len(self._websockets)} device(s)")
+        await self.broadcast_json({"type": "request_follow_up"})
 
     async def broadcast_phase(self, value: str) -> None:
         """Send a va_client phase message to every connected device."""

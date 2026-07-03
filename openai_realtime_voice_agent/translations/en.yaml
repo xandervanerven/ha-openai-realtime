@@ -4,13 +4,30 @@
 # what value makes sense. A Dutch version lives in nl.yaml.
 configuration:
   # --- 🔑 Basics ---
+  llm_provider:
+    name: "🔑 Basics · Brain (AI provider)"
+    description: >-
+      Which cloud service listens, thinks and talks. "openai" (default) uses
+      OpenAI Realtime with the OpenAI key below. "gemini" uses Google Gemini
+      Live with the Gemini key — it runs entirely on Google's FREE tier (web
+      search included) and understands mixed languages out of the box.
+      Everything else about the add-on works the same with either brain.
   openai_api_key:
     name: "🔑 Basics · OpenAI API key"
     description: >-
       Your personal OpenAI key (starts with sk-...). Create one at
       platform.openai.com → API keys, and make sure billing is set up.
-      Everything the assistant does — listening, thinking, speaking, web
-      search — runs on this key.
+      With the "openai" brain everything the assistant does — listening,
+      thinking, speaking, web search — runs on this key. With the "gemini"
+      brain you can leave it empty (it's only used if Search provider is set
+      to "openai").
+  gemini_api_key:
+    name: "🔑 Basics · Gemini API key"
+    description: >-
+      Your Google AI Studio key, created free at aistudio.google.com → "Get
+      API key". Only needed with the "gemini" brain. IMPORTANT: keep the key
+      on a Google Cloud project WITHOUT billing enabled — turning on billing
+      permanently removes that project's free tier.
   instructions:
     name: "🔑 Basics · Assistant personality (system prompt)"
     description: >-
@@ -61,6 +78,18 @@ configuration:
     description: >-
       1.0 = normal. Lower is slower and clearer (down to 0.25), higher is
       faster (up to 1.5). Changes only the pace, not the words.
+  gemini_model:
+    name: "🗣️ Model & voice · Gemini model (gemini brain only)"
+    description: >-
+      The Gemini Live model that listens and talks. The default
+      (models/gemini-3.1-flash-live-preview) is the best current pick. Avoid
+      the expressive "native audio" models: their lively voice can trigger the
+      device's own "stop" detector mid-answer. Ignored with the openai brain.
+  gemini_voice:
+    name: "🗣️ Model & voice · Gemini voice (gemini brain only)"
+    description: >-
+      One of Gemini's prebuilt voices, e.g. Kore (default), Puck, Charon,
+      Fenrir or Aoede. Ignored with the openai brain.
   max_output_tokens:
     name: "🗣️ Model & voice · Maximum answer length"
     description: >-
@@ -106,6 +135,14 @@ configuration:
       during smart-home actions, so the LED and the "stop" word keep working
       through the whole answer. 1500 is a good default; raise it if the
       device flips to idle in the middle of long answers.
+  follow_up_chime:
+    name: "💬 Conversation · Chime when the mic re-opens"
+    description: >-
+      Plays the wake chime at the exact moment the follow-up microphone opens
+      after an answer — an audible "speak now" cue, so you don't start talking
+      into a closed mic. The assistant also skips re-opening entirely when you
+      clearly end the conversation ("no thanks", "bye"). Works best with
+      Follow-up listening set to 0 (the chime replaces the silent window).
 
   # --- 🌐 Web search ---
   enable_web_search:
@@ -126,6 +163,21 @@ configuration:
     description: >-
       Only used when Search model is set to "custom". Any model that supports
       OpenAI's web_search tool. (Hidden by default.)
+  web_search_provider:
+    name: "🌐 Web search · Search provider (gemini brain only)"
+    description: >-
+      What powers lookups when the Brain is "gemini". "gemini" (default) uses
+      Google Search grounding on the same free Gemini key — no extra cost, no
+      OpenAI account needed. "openai" uses the OpenAI search model above
+      instead (needs the OpenAI key; a few cents per lookup). The openai brain
+      always searches via OpenAI.
+  gemini_search_model:
+    name: "🌐 Web search · Gemini search model"
+    description: >-
+      The (non-Live) Gemini model that runs the Google-grounded lookup.
+      gemini-2.5-flash (default) is fast and free. Keep it in the Gemini 2.x
+      family: Google's free grounding allowance for Gemini 3 models is
+      currently zero.
 
   # --- 🎚️ Audio ---
   playback_prebuffer_ms:

@@ -2,7 +2,9 @@
 set -e
 
 # --- 🔑 Basics ---
+LLM_PROVIDER=$(bashio::config 'llm_provider')
 OPENAI_API_KEY=$(bashio::config 'openai_api_key')
+GEMINI_API_KEY=$(bashio::config 'gemini_api_key')
 INSTRUCTIONS=$(bashio::config 'instructions')
 TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
 
@@ -10,18 +12,23 @@ TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
 OPENAI_MODEL=$(bashio::config 'openai_model')
 OPENAI_VOICE=$(bashio::config 'openai_voice')
 OPENAI_SPEED=$(bashio::config 'openai_speed')
+GEMINI_MODEL=$(bashio::config 'gemini_model')
+GEMINI_VOICE=$(bashio::config 'gemini_voice')
 MAX_OUTPUT_TOKENS=$(bashio::config 'max_output_tokens')
 
 # --- 💬 Conversation ---
 FOLLOW_UP_LISTEN_SECONDS=$(bashio::config 'follow_up_listen_seconds')
 FOLLOW_UP_OPEN_DELAY_MS=$(bashio::config 'follow_up_open_delay_ms')
 WAKE_OPEN_DELAY_MS=$(bashio::config 'wake_open_delay_ms')
+FOLLOW_UP_CHIME=$(bashio::config 'follow_up_chime')
 VAD_EAGERNESS=$(bashio::config 'vad_eagerness')
 PHASE_IDLE_DEBOUNCE_MS=$(bashio::config 'phase_idle_debounce_ms')
 
 # --- 🌐 Web search ---
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
+WEB_SEARCH_PROVIDER=$(bashio::config 'web_search_provider')
 WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
+GEMINI_SEARCH_MODEL=$(bashio::config 'gemini_search_model')
 
 # --- 🎚️ Audio ---
 PLAYBACK_PREBUFFER_MS=$(bashio::config 'playback_prebuffer_ms')
@@ -41,27 +48,44 @@ TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
 # --- 🔍 Debug ---
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
 
-# Validate required configuration
-if [ -z "$OPENAI_API_KEY" ]; then
-    bashio::log.error "OPENAI_API_KEY is required but not set"
-    exit 1
+# Validate required configuration — which key is mandatory depends on the brain
+if [ "$LLM_PROVIDER" = "gemini" ]; then
+    if [ -z "$GEMINI_API_KEY" ]; then
+        bashio::log.error "llm_provider is 'gemini' but gemini_api_key is not set"
+        exit 1
+    fi
+    if [ "$ENABLE_WEB_SEARCH" = "true" ] && [ "$WEB_SEARCH_PROVIDER" = "openai" ] && [ -z "$OPENAI_API_KEY" ]; then
+        bashio::log.warning "web_search_provider is 'openai' but openai_api_key is not set — web search will be disabled"
+    fi
+else
+    if [ -z "$OPENAI_API_KEY" ]; then
+        bashio::log.error "OPENAI_API_KEY is required but not set"
+        exit 1
+    fi
 fi
 
 # Export environment variables
+export LLM_PROVIDER
 export OPENAI_API_KEY
+export GEMINI_API_KEY
 export INSTRUCTIONS
 export TRANSCRIPTION_LANGUAGE
 export OPENAI_MODEL
 export OPENAI_VOICE
 export OPENAI_SPEED
+export GEMINI_MODEL
+export GEMINI_VOICE
 export MAX_OUTPUT_TOKENS
 export FOLLOW_UP_LISTEN_SECONDS
 export FOLLOW_UP_OPEN_DELAY_MS
 export WAKE_OPEN_DELAY_MS
+export FOLLOW_UP_CHIME
 export VAD_EAGERNESS
 export PHASE_IDLE_DEBOUNCE_MS
 export ENABLE_WEB_SEARCH
+export WEB_SEARCH_PROVIDER
 export WEB_SEARCH_MODEL
+export GEMINI_SEARCH_MODEL
 export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
 export LONGLIVED_TOKEN
