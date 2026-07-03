@@ -599,7 +599,15 @@ class Application:
                         required=tool_def.get("parameters", {}).get("required", []),
                     )
 
-                standard_tools = []
+                from app.end_conversation_tool import (
+                    get_end_conversation_tool_definition,
+                    create_end_conversation_tool_handler,
+                )
+
+                # end_conversation is always exposed on this path: it only
+                # suppresses the follow-up chime (soft close), unlike the
+                # opt-in disconnect_client which tears down the device WS.
+                standard_tools = [_to_schema(get_end_conversation_tool_definition())]
                 if self.enable_disconnect_tool:
                     standard_tools.append(_to_schema(get_disconnect_tool_definition()))
                 if self.enable_web_search and self.openai_api_key:
@@ -620,6 +628,10 @@ class Application:
                     max_output_tokens=self.max_output_tokens,
                 )
                 # Same tail as the OpenAI path: handler registration + bookkeeping.
+                self.openai_service.register_function(
+                    "end_conversation",
+                    create_end_conversation_tool_handler(self.websocket_handler))
+                logger.info("✅ Registered end_conversation tool handler")
                 if self.enable_disconnect_tool:
                     self.openai_service.register_function(
                         "disconnect_client", create_disconnect_tool_handler(self.websocket_transport))

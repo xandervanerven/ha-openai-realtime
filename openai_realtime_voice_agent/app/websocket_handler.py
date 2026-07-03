@@ -821,6 +821,14 @@ class WebSocketHandler:
         for ws in list(self._websockets):
             await self._send_json(ws, obj)
 
+    def suppress_next_followup_chime(self) -> None:
+        """One-shot: skip the chime/mic-open at this turn's natural idle.
+
+        Called by the end_conversation tool (model detected closing intent)
+        and by the device-stop handler. Cleared on the next wake.
+        """
+        self._suppress_followup_chime = True
+
     async def request_follow_up_chime(self) -> None:
         """Open the device's CHIME-GATED follow-up window after a natural reply end.
 
