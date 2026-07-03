@@ -3,13 +3,31 @@
 # Engelse (en.yaml). Groepen via emoji-prefix — zelfde volgorde als config.yaml.
 configuration:
   # --- 🔑 Basis ---
+  llm_provider:
+    name: "🔑 Basis · Brein (AI-aanbieder)"
+    description: >-
+      Welke clouddienst luistert, denkt en praat. "openai" (standaard)
+      gebruikt OpenAI Realtime met de OpenAI-sleutel hieronder. "gemini"
+      gebruikt Google Gemini Live met de Gemini-sleutel — dat draait volledig
+      op Googles GRATIS niveau (inclusief zoeken op internet) en verstaat
+      gemengde talen uit zichzelf. Al het overige van de add-on werkt met
+      beide breinen hetzelfde.
   openai_api_key:
     name: "🔑 Basis · OpenAI API-sleutel"
     description: >-
       Je persoonlijke OpenAI-sleutel (begint met sk-...). Maak er één aan op
       platform.openai.com → API keys, en zorg dat facturering is ingesteld.
-      Alles wat de assistent doet — luisteren, denken, praten, zoeken op
-      internet — loopt via deze sleutel.
+      Met het "openai"-brein loopt alles wat de assistent doet — luisteren,
+      denken, praten, zoeken op internet — via deze sleutel. Met het
+      "gemini"-brein mag dit veld leeg blijven (alleen nodig als de
+      zoekaanbieder op "openai" staat).
+  gemini_api_key:
+    name: "🔑 Basis · Gemini API-sleutel"
+    description: >-
+      Je Google AI Studio-sleutel, gratis aan te maken op aistudio.google.com
+      → "Get API key". Alleen nodig met het "gemini"-brein. BELANGRIJK: houd
+      de sleutel op een Google Cloud-project ZONDER facturering — facturering
+      aanzetten schakelt het gratis niveau van dat project definitief uit.
   instructions:
     name: "🔑 Basis · Persoonlijkheid (systeemprompt)"
     description: >-
@@ -62,6 +80,19 @@ configuration:
     description: >-
       1.0 = normaal. Lager is langzamer en duidelijker (minimaal 0.25), hoger
       is sneller (maximaal 1.5). Verandert alleen het tempo, niet de woorden.
+  gemini_model:
+    name: "🗣️ Model & stem · Gemini-model (alleen gemini-brein)"
+    description: >-
+      Het Gemini Live-model dat luistert en praat. De standaardwaarde
+      (models/gemini-3.1-flash-live-preview) is momenteel de beste keus.
+      Vermijd de expressieve "native audio"-modellen: hun levendige stem kan
+      de "stop"-detector van het apparaat midden in een antwoord activeren.
+      Genegeerd met het openai-brein.
+  gemini_voice:
+    name: "🗣️ Model & stem · Gemini-stem (alleen gemini-brein)"
+    description: >-
+      Een van Gemini's voorgedefinieerde stemmen, bijv. Kore (standaard),
+      Puck, Charon, Fenrir of Aoede. Genegeerd met het openai-brein.
   max_output_tokens:
     name: "🗣️ Model & stem · Maximale antwoordlengte"
     description: >-
@@ -109,6 +140,15 @@ configuration:
       zinnen en tijdens smart-home-acties, zodat de LED en het "stop"-woord
       het hele antwoord blijven werken. 1500 is een goede standaard; verhoog
       als het apparaat midden in lange antwoorden al op rust springt.
+  follow_up_chime:
+    name: "💬 Gesprek · Toon wanneer de microfoon weer opent"
+    description: >-
+      Speelt de wektoon af op het moment dat de naluister-microfoon na een
+      antwoord daadwerkelijk opengaat — een hoorbaar "zeg het maar", zodat je
+      niet tegen een dichte microfoon begint te praten. De assistent slaat het
+      heropenen bovendien over wanneer je het gesprek duidelijk afsluit ("nee
+      bedankt", "doei"). Werkt het best met Naluisteren op 0 (de toon vervangt
+      het stille venster).
 
   # --- 🌐 Websearch ---
   enable_web_search:
@@ -129,6 +169,22 @@ configuration:
     description: >-
       Alleen gebruikt als Zoekmodel op "custom" staat. Elk model dat OpenAI's
       web_search-tool ondersteunt. (Standaard verborgen.)
+  web_search_provider:
+    name: "🌐 Websearch · Zoekaanbieder (alleen gemini-brein)"
+    description: >-
+      Wat de zoekopdrachten uitvoert wanneer het Brein op "gemini" staat.
+      "gemini" (standaard) gebruikt Google Search-grounding op dezelfde gratis
+      Gemini-sleutel — geen extra kosten, geen OpenAI-account nodig. "openai"
+      gebruikt in plaats daarvan het OpenAI-zoekmodel hierboven (OpenAI-sleutel
+      vereist; een paar cent per zoekopdracht). Het openai-brein zoekt altijd
+      via OpenAI.
+  gemini_search_model:
+    name: "🌐 Websearch · Gemini-zoekmodel"
+    description: >-
+      Het (niet-Live) Gemini-model dat de Google-zoekopdracht uitvoert.
+      gemini-2.5-flash (standaard) is snel en gratis. Houd het in de Gemini
+      2.x-familie: Googles gratis grounding-quotum voor Gemini 3-modellen is
+      momenteel nul.
 
   # --- 🎚️ Audio ---
   playback_prebuffer_ms:

@@ -41,7 +41,13 @@ homeassistant_api: true
 # ----------------------------------------------------------------------------
 options:
   # --- 🔑 Basics ---
+  # Which cloud brain listens and talks. "openai" = OpenAI Realtime (the
+  # original path, byte-identical to before). "gemini" = Google Gemini Live,
+  # which runs on a free AI Studio key (keep that key on a project WITHOUT
+  # billing — enabling billing removes Google's free tier).
+  llm_provider: "openai"
   openai_api_key: ""
+  gemini_api_key: ""
   instructions: >-
     You are the cheerful, friendly voice assistant of Home Assistant and you
     control the smart home. LANGUAGE: Speak and understand only English, with a
@@ -64,6 +70,13 @@ options:
   openai_model: "gpt-realtime-2"
   openai_voice: "marin"
   openai_speed: 1.0
+  # Gemini-only twins of the two options above (ignored on the openai path).
+  # Plain strings, not lists: the Live model roster changes too fast to pin.
+  # NB the expressive native-audio Gemini models can false-trigger the
+  # device-side "stop" detector with their own voice (speaker→mic leak past
+  # the AEC) — the default flat-voiced Live model does not.
+  gemini_model: "models/gemini-3.1-flash-live-preview"
+  gemini_voice: "Kore"
   max_output_tokens: 0
 
   # --- 💬 Conversation ---
@@ -82,10 +95,22 @@ options:
   wake_open_delay_ms: 700
   vad_eagerness: "low"
   phase_idle_debounce_ms: 1500
+  # Play the wake chime at the moment the follow-up mic actually opens (the
+  # firmware's request_follow_up path) — an audible "speak now" cue instead of
+  # the silent window. Best combined with follow_up_listen_seconds: 0.
+  follow_up_chime: true
 
   # --- 🌐 Web search ---
   enable_web_search: true
   web_search_model: "gpt-5.5"
+  # Only used with llm_provider: gemini — "gemini" backs the web_search tool
+  # with Google Search grounding on the same free key (REST generate_content
+  # on gemini_search_model; the Live models' free tier rejects in-session
+  # grounding). "openai" keeps the Responses-API search above instead.
+  web_search_provider: "gemini"
+  # Must stay a Gemini 2.x model while Google's free grounding quota for the
+  # Gemini 3 family is 0 (their 1011 error misleadingly says "quota exceeded").
+  gemini_search_model: "gemini-2.5-flash"
 
   # --- 🎚️ Audio ---
   # 150 (not 0): cushions WS jitter so the speaker doesn't run dry mid-word
@@ -111,7 +136,9 @@ options:
 
 schema:
   # --- 🔑 Basics ---
+  llm_provider: "list(openai|gemini)"
   openai_api_key: password
+  gemini_api_key: password
   instructions: str
   transcription_language: str?
   # --- 🗣️ Model & voice ---
@@ -120,6 +147,8 @@ schema:
   openai_voice: "list(marin|cedar|alloy|ash|ballad|coral|echo|sage|shimmer|verse|custom)"
   openai_voice_custom: str?
   openai_speed: float(0.25,1.5)
+  gemini_model: str
+  gemini_voice: str
   max_output_tokens: int(0,4096)
   # --- 💬 Conversation ---
   follow_up_listen_seconds: int(0,60)
@@ -127,10 +156,13 @@ schema:
   wake_open_delay_ms: int(0,5000)
   vad_eagerness: "list(low|medium|high|auto)"
   phase_idle_debounce_ms: int(0,10000)
+  follow_up_chime: bool
   # --- 🌐 Web search ---
   enable_web_search: bool
   web_search_model: "list(gpt-5-nano|gpt-5.4-nano|gpt-5-mini|gpt-5.4-mini|gpt-5|gpt-5.4|gpt-5.5|custom)"
   web_search_model_custom: str?
+  web_search_provider: "list(gemini|openai)"
+  gemini_search_model: str
   # --- 🎚️ Audio ---
   playback_prebuffer_ms: int(0,2000)
   noise_reduction: "list(off|near_field|far_field)"

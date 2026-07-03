@@ -2,6 +2,29 @@
 
 All notable changes to this add-on. Newest first.
 
+## Unreleased
+
+**New: run the whole agent on Google Gemini — for free**
+
+- New **Brain** option (`llm_provider`): choose `openai` (default, unchanged)
+  or `gemini`. The gemini brain runs on **Gemini Live** with a free Google AI
+  Studio key: voice, smart-home control and conversation at zero cost, and it
+  understands mixed/multilingual speech out of the box. The OpenAI path is
+  byte-identical to before.
+- **Web search is free on the gemini brain too**: the `web_search` tool is
+  backed by Google Search grounding on the same key
+  (`web_search_provider: gemini`, 1,500 grounded queries/day). Or keep OpenAI
+  search with `web_search_provider: openai`.
+- **Follow-up chime** (`follow_up_chime`, default on): the device plays the
+  wake chime at the exact moment the follow-up microphone opens after a reply
+  — an audible "speak now" cue instead of a silent window you can miss.
+- **The assistant can now end a conversation**: when you clearly close it
+  ("no thanks", "that's all", "bye" — any language), it gives one short
+  goodbye and the microphone does **not** re-open.
+- Gemini reliability baked in from live testing: session-resumption reconnects
+  for Google's routine idle drops, graceful handover on server GoAway notices,
+  and native 16 kHz mic input (less upstream bandwidth).
+
 ## 0.6.0
 
 > ⚠️ **This update has two parts — please update both:**

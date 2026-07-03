@@ -123,6 +123,45 @@ The add-on log shows each turn: `🗣️ user:` (when transcription language is 
 `🔌 …reconnecting` / `✅ reconnected` on a connection recovery. View it on the add-on
 **Log** tab.
 
+## Running on Google Gemini instead of OpenAI (free)
+
+The whole agent can run on **Google Gemini Live** at zero cost: set
+**Brain (`llm_provider`)** to `gemini` and fill in a **Gemini API key**. Voice,
+smart-home control, follow-ups, "stop", web search — everything works the same;
+the OpenAI path is completely untouched when you stay on `openai`.
+
+1. Get a free key at [aistudio.google.com](https://aistudio.google.com) → **Get
+   API key**. **Keep the key on a project WITHOUT billing** — enabling billing
+   permanently removes that project's free tier.
+2. Set `llm_provider: gemini` and `gemini_api_key` on the Configuration tab,
+   then restart the add-on.
+3. Web search defaults to **Google Search grounding on the same free key**
+   (`web_search_provider: gemini`) — no OpenAI account needed at all.
+
+Worth knowing about the gemini brain:
+
+- **Languages:** Gemini Live understands mixed/multilingual speech out of the
+  box (e.g. Hindi/English code-switching) — no `transcription_language` needed.
+  Lock the language in `instructions` if you *don't* want that.
+- **Model choice:** stay on the default Live model. The expressive
+  "native audio" models sound livelier but their voice can trigger the
+  device's own "stop" detector mid-answer (speaker→mic leak past the echo
+  canceller).
+- **Log lines:** quiet sessions are dropped by Google every few minutes and
+  reconnect instantly (`🔁 idle-session drop … reconnecting`) — routine, not an
+  error. Session context survives via Gemini's session resumption.
+- **Why no in-session Google Search?** Google's free tier rejects the
+  `google_search` tool on Live models at connect time (their Search-grounding
+  quota for the Gemini 3 family is zero; the error misleadingly says "quota
+  exceeded"). The add-on therefore routes the `web_search` tool through a
+  regular `gemini-2.5-flash` call with grounding — 1,500 free grounded queries
+  per day. On a paid key you can set the env `GEMINI_GOOGLE_SEARCH=true` to
+  use native in-session grounding instead.
+- OpenAI-specific options are ignored on the gemini brain: `openai_model`,
+  `openai_voice`, `openai_speed`, `transcription_model`, `noise_reduction`,
+  and the `turn_detection_type` escape hatch (`vad_eagerness` still applies —
+  it maps onto Gemini's end-of-speech sensitivity).
+
 ## Known limitations
 
 - **No voice timers or alarms yet.** Setting a timer by voice isn't supported (the
