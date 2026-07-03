@@ -588,7 +588,7 @@ class Application:
                 # pipecat's Gemini adapter emits the function declarations. The
                 # OpenAI-format all_tools/SessionProperties below are not used.
                 from pipecat.adapters.schemas.function_schema import FunctionSchema
-                from pipecat.adapters.schemas.tools_schema import ToolsSchema
+                from pipecat.adapters.schemas.tools_schema import AdapterType, ToolsSchema
                 from app.gemini_service import create_gemini_service
 
                 def _to_schema(tool_def: dict) -> FunctionSchema:
@@ -610,20 +610,35 @@ class Application:
                 standard_tools = [_to_schema(get_end_conversation_tool_definition())]
                 if self.enable_disconnect_tool:
                     standard_tools.append(_to_schema(get_disconnect_tool_definition()))
-                if self.enable_web_search and self.openai_api_key:
-                    # web_search still rides the OpenAI Responses API → only
-                    # exposed when an OpenAI key is present alongside Gemini.
+                # web_search backend: "gemini" (default) = grounded REST call on
+                # the same free key (gemini_search_tool.py); "openai" = the
+                # Responses-API handler (needs the OpenAI key alongside).
+                web_search_provider = os.environ.get(
+                    "WEB_SEARCH_PROVIDER", "gemini").strip().lower()
+                web_search_on = self.enable_web_search and (
+                    web_search_provider == "gemini" or self.openai_api_key)
+                if web_search_on:
                     standard_tools.append(_to_schema(get_web_search_tool_definition()))
                 if mcp_tools_schema:
                     for fs in mcp_tools_schema.standard_tools:
                         if self.mcp_tool_allowlist and fs.name not in self.mcp_tool_allowlist:
                             continue
                         standard_tools.append(fs)
+                # Gemini's server-side Google Search grounding — free web access,
+                # no handler needed (executed by Google, results grounded into
+                # the reply). pipecat's Gemini adapter appends custom tools
+                # after the function declarations. Toggle: GEMINI_GOOGLE_SEARCH.
+                custom_tools = None
+                if os.environ.get("GEMINI_GOOGLE_SEARCH", "true").strip().lower() == "true":
+                    custom_tools = {AdapterType.GEMINI: [{"google_search": {}}]}
+                    logger.info("🌐 Gemini native google_search grounding enabled (free)")
+
                 logger.info(f"🔧 Creating Gemini session with {len(standard_tools)} tools: "
                             f"{[t.name for t in standard_tools]}")
                 self.openai_service = create_gemini_service(
                     instructions=self.instructions,
-                    tools_schema=ToolsSchema(standard_tools=standard_tools) if standard_tools else None,
+                    tools_schema=ToolsSchema(standard_tools=standard_tools, custom_tools=custom_tools)
+                    if standard_tools or custom_tools else None,
                     vad_eagerness=self.vad_eagerness,
                     max_output_tokens=self.max_output_tokens,
                 )
@@ -636,11 +651,21 @@ class Application:
                     self.openai_service.register_function(
                         "disconnect_client", create_disconnect_tool_handler(self.websocket_transport))
                     logger.info("✅ Registered disconnect tool handler")
-                if self.enable_web_search and self.openai_api_key:
-                    self.openai_service.register_function(
-                        "web_search",
-                        create_web_search_tool_handler(self.openai_api_key, self.web_search_model))
-                    logger.info(f"✅ Registered web_search tool handler (model={self.web_search_model})")
+                if web_search_on:
+                    if web_search_provider == "gemini":
+                        from app.gemini_search_tool import create_gemini_web_search_tool_handler
+                        gemini_search_model = os.environ.get(
+                            "GEMINI_SEARCH_MODEL", "gemini-2.5-flash").strip()
+                        self.openai_service.register_function(
+                            "web_search",
+                            create_gemini_web_search_tool_handler(
+                                os.environ.get("GEMINI_API_KEY", ""), gemini_search_model))
+                        logger.info(f"✅ Registered web_search tool handler (gemini grounding, model={gemini_search_model})")
+                    else:
+                        self.openai_service.register_function(
+                            "web_search",
+                            create_web_search_tool_handler(self.openai_api_key, self.web_search_model))
+                        logger.info(f"✅ Registered web_search tool handler (model={self.web_search_model})")
                 if self.mcp_client and mcp_tools_schema:
                     try:
                         await self.mcp_client.register_tools_schema(mcp_tools_schema, self.openai_service)
