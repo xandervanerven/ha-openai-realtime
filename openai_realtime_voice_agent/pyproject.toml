@@ -12,7 +12,7 @@ python = ">=3.11,<3.14"
 # WebsocketServerParams). Without a lockfile pip otherwise resolves Pipecat
 # 1.x, whose changed API breaks the imports. 0.0.97 is the version this was
 # developed/tested against.
-pipecat-ai = {extras = ["mcp", "openai", "websocket"], version = "0.0.97"}
+pipecat-ai = {extras = ["mcp", "openai", "websocket", "google"], version = "0.0.97"}
 python-dotenv = ">=1.0.0"
 fastapi = ">=0.100.0"
 uvicorn = {extras = ["standard"], version = ">=0.23.0"}

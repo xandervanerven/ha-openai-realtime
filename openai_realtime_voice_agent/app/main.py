@@ -394,7 +394,14 @@ class Application:
             f"max restored messages: {max_context_messages or 'unlimited'}"
         )
         
-        if not openai_api_key:
+        # Provider switch: "openai" (default, upstream behavior) or "gemini"
+        # (Gemini Live via app/gemini_service.py, free tier). The OpenAI key is
+        # only mandatory in openai mode — in gemini mode it is optional and
+        # only used by the web_search tool if that stays enabled.
+        self.llm_provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+        if self.llm_provider not in ("openai", "gemini"):
+            raise ValueError(f"LLM_PROVIDER must be 'openai' or 'gemini', got {self.llm_provider!r}")
+        if self.llm_provider == "openai" and not openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         
         # Initialize Home Assistant MCP Service
@@ -575,6 +582,64 @@ class Application:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to fetch MCP tool definitions: {e}")
             
+            if self.llm_provider == "gemini":
+                # ---- Gemini Live path (see app/gemini_service.py) ----
+                # Tools go to the constructor as a provider-neutral ToolsSchema;
+                # pipecat's Gemini adapter emits the function declarations. The
+                # OpenAI-format all_tools/SessionProperties below are not used.
+                from pipecat.adapters.schemas.function_schema import FunctionSchema
+                from pipecat.adapters.schemas.tools_schema import ToolsSchema
+                from app.gemini_service import create_gemini_service
+
+                def _to_schema(tool_def: dict) -> FunctionSchema:
+                    return FunctionSchema(
+                        name=tool_def["name"],
+                        description=tool_def.get("description", ""),
+                        properties=tool_def.get("parameters", {}).get("properties", {}),
+                        required=tool_def.get("parameters", {}).get("required", []),
+                    )
+
+                standard_tools = []
+                if self.enable_disconnect_tool:
+                    standard_tools.append(_to_schema(get_disconnect_tool_definition()))
+                if self.enable_web_search and self.openai_api_key:
+                    # web_search still rides the OpenAI Responses API → only
+                    # exposed when an OpenAI key is present alongside Gemini.
+                    standard_tools.append(_to_schema(get_web_search_tool_definition()))
+                if mcp_tools_schema:
+                    for fs in mcp_tools_schema.standard_tools:
+                        if self.mcp_tool_allowlist and fs.name not in self.mcp_tool_allowlist:
+                            continue
+                        standard_tools.append(fs)
+                logger.info(f"🔧 Creating Gemini session with {len(standard_tools)} tools: "
+                            f"{[t.name for t in standard_tools]}")
+                self.openai_service = create_gemini_service(
+                    instructions=self.instructions,
+                    tools_schema=ToolsSchema(standard_tools=standard_tools) if standard_tools else None,
+                    vad_eagerness=self.vad_eagerness,
+                    max_output_tokens=self.max_output_tokens,
+                )
+                # Same tail as the OpenAI path: handler registration + bookkeeping.
+                if self.enable_disconnect_tool:
+                    self.openai_service.register_function(
+                        "disconnect_client", create_disconnect_tool_handler(self.websocket_transport))
+                    logger.info("✅ Registered disconnect tool handler")
+                if self.enable_web_search and self.openai_api_key:
+                    self.openai_service.register_function(
+                        "web_search",
+                        create_web_search_tool_handler(self.openai_api_key, self.web_search_model))
+                    logger.info(f"✅ Registered web_search tool handler (model={self.web_search_model})")
+                if self.mcp_client and mcp_tools_schema:
+                    try:
+                        await self.mcp_client.register_tools_schema(mcp_tools_schema, self.openai_service)
+                        logger.info(f"✅ Registered {len(mcp_tools_schema.standard_tools)} MCP tool handlers")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to register MCP tool handlers: {e}")
+                if client_id:
+                    self.session_manager.set_current_service(client_id, self.openai_service)
+                logger.info("✅ New Gemini Live Session created")
+                return self.openai_service
+
             # Turn detection: semantic_vad (recommended — semantic end-of-turn,
             # echo-resistant, doesn't cut the user off) or classic server_vad.
             if self.turn_detection_type == "semantic_vad":
@@ -733,7 +798,10 @@ class Application:
         # create_response=True), and there's no double — AND no startup speech.
         # The empty sentinel is harmlessly overwritten by the real context on the
         # first turn (both branches do `self._context = context`).
-        if self.turn_detection_type == "semantic_vad" and self.semantic_vad_create_response:
+        # Gemini path: the constructor's inference_on_context_initialization=False
+        # covers the no-startup-speech requirement; the flags below are OpenAI
+        # service internals that don't exist there.
+        if self.llm_provider == "openai" and self.turn_detection_type == "semantic_vad" and self.semantic_vad_create_response:
             try:
                 from pipecat.processors.aggregators.llm_context import LLMContext
                 if self.openai_service is not None and getattr(self.openai_service, "_context", None) is None:
