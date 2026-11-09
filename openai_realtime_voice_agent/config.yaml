@@ -108,6 +108,7 @@ options:
 
   # --- 🔍 Debug ---
   enable_recording: false
+  enable_tracing: false
 
 schema:
   # --- 🔑 Basics ---
@@ -152,6 +153,7 @@ schema:
   vad_silence_duration_ms: int?
   # --- 🔍 Debug ---
   enable_recording: bool
+  enable_tracing: bool
 # No `image:` key -> Home Assistant builds the add-on locally from the
 # Dockerfile in this directory (see build.yaml). This makes the fork work
 # without publishing images to a registry. Advanced users who prefer fast

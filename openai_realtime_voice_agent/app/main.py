@@ -8,6 +8,7 @@ import dotenv
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
+from pipecat.services.openai.realtime.events import ClientEvent, SessionUpdateEvent
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.transports.websocket.server import WebsocketServerTransport
 from app.mcp_service import HomeAssistantMCPService
@@ -74,6 +75,22 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
     keeps the full assistant text the user may not have fully heard — purely
     cosmetic for context.)
     """
+
+    _tracing_requested = False
+
+    async def _handle_evt_session_created(self, evt):
+        self._tracing_requested = False
+        await super()._handle_evt_session_created(evt)
+
+    async def send_client_event(self, event: ClientEvent):
+        if isinstance(event, SessionUpdateEvent) and event.session.tracing is not None:
+            # Tracing is immutable after it is enabled on a Realtime session.
+            if self._tracing_requested:
+                session = event.session.model_copy(update={"tracing": None})
+                event = event.model_copy(update={"session": session})
+            else:
+                self._tracing_requested = True
+        await super().send_client_event(event)
 
     async def _truncate_current_audio_response(self):  # type: ignore[override]
         return
@@ -454,6 +471,7 @@ class Application:
         self.mcp_client = mcp_client
         self.enable_web_search = enable_web_search
         self.web_search_model = web_search_model
+        self.enable_tracing = os.environ.get("ENABLE_TRACING", "false").lower() == "true"
 
         # Initialize audio recording service (optional)
         self.audio_recording_service = AudioRecordingService(
@@ -631,6 +649,7 @@ class Application:
 
             session_properties = SessionProperties(
                 instructions=self.instructions,
+                tracing="auto" if self.enable_tracing else None,
                 # Cap the reply length: bounds runaway monologues + per-response
                 # output-token cost. None = unlimited (the API default "inf").
                 max_output_tokens=self.max_output_tokens,

@@ -228,3 +228,9 @@ configuration:
     description: >-
       Saves microphone and speaker audio to files inside the add-on, for
       troubleshooting only. Leave off normally.
+  enable_tracing:
+    name: "🔍 Debug · OpenAI Realtime tracing"
+    description: >-
+      Sends traces of new Realtime sessions to the OpenAI Traces dashboard.
+      Traces can contain conversation content. Restart the add-on after
+      changing this setting.
