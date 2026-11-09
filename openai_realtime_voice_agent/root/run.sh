@@ -40,6 +40,7 @@ TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
 
 # --- 🔍 Debug ---
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
+ENABLE_TRACING=$(bashio::config 'enable_tracing')
 
 # Validate required configuration
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -71,6 +72,7 @@ export SESSION_REUSE_TIMEOUT_SECONDS
 export MAX_CONTEXT_MESSAGES
 export TRANSCRIPTION_MODEL
 export ENABLE_RECORDING
+export ENABLE_TRACING
 
 # The *_custom escape hatches (🗣️/🌐/⚙️) are optional WITHOUT defaults —
 # bashio::config prints "null" for unset optionals, and main.py's
